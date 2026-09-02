@@ -66,10 +66,10 @@ container_version: "v1"
 #
 # v2.1.5 is the current product line (tebako#517: the glibc-scoped
 # realpath NULL-arm reroute — musl needs none; contract unchanged at 2).
-# Verified 2026-09-02: v2.1.5 publishes units for linux-gnu-x86_64,
+# Verified 2026-09-02 (the fully published release): v2.1.5 ships a unit
+# for all seven legs — linux-gnu-{x86_64,arm64},
 # linux-musl-{x86_64,arm64}, macos-{x86_64,arm64} and
-# x86_64-windows-gnu. linux-gnu-arm64 has NO unit yet — that leg builds
-# the closure from source until the product ships one.
+# x86_64-windows-gnu.
 link_unit_release: "v2.1.5"
 
 # The tamatebako/python SOURCE release this factory consumes

@@ -123,9 +123,8 @@ appear in workflow YAML.
   build PR pins per-leg digests.
 - `link_unit_release: "v2.1.5"` — the tamatebako/tebako release whose
   prebuilt link unit the legs consume (the current line; verified
-  2026-09-02 — all triplets ship a unit except `linux-gnu-arm64`, which
-  builds the closure from source until one is published; a miss is never
-  an error).
+  2026-09-02 against the fully published release — all seven legs ship a
+  unit, `linux-gnu-arm64` included; a miss would never be an error).
 - `source_release: ""` — the tamatebako/python source release pin.
   **Empty placeholder**: the source factory has published no release yet;
   build legs fail closed until its first tag lands and this is set.
