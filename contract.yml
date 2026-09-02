@@ -1,0 +1,98 @@
+# Copyright (c) 2026 [Ribose Inc](https://www.ribose.com).
+# All rights reserved.
+# This file is a part of tamatebako
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# Bootstrap <-> runtime contract version: the versioned protocol between
+# the tebako bootstrap (released from tamatebako/tebako) and the runtime
+# images published from this repo — the env vars passed down, the argv
+# layout, and the filesystem-image handoff. Modeled on
+# tebako-runtime-ruby's contract.yml; the version -> semantics changelog
+# table is spec 06's, the contract-2 grammar is spec 17's.
+#
+# This factory has NO contract-1 era: python runtimes exist only in the
+# image era, so contract_version is 2 from the first publish (the schema
+# floors it at 2 — contract 1 was the retired v1 C++ tebako-main.cpp
+# grammar this factory never ships). Bump rules mirror the ruby
+# factory's: any change to env/argv/handoff semantics bumps the integer
+# by exactly +1, here and in the compiled-in TEBAKO_CONTRACT_VERSION, in
+# the same commit — scripts/check_contract.rb locks the two (the
+# driver-source parity arm lands with the first real build; today the
+# check validates this file against the schema).
+#
+# Schema: schema/contract.schema.yml (validated by the same check).
+---
+contract_version: 2
+
+# The toolchain CONTAINER line the POSIX legs run inside:
+# ghcr.io/tamatebako/tpkg-builder-<triplet>:<container_version>, baked by
+# tebako-ci-containers. This factory never references the archived v1
+# tebako-<platform> images. "v1" is the moving family tag; the first real
+# build PR pins per-leg digests (the builder publish workflow prints
+# them — consumers pin by digest, tebako-ci-containers README). Windows
+# and macOS legs are runner-native — no tpkg-builder images exist for
+# them (the documented exception, not a gap).
+container_version: "v1"
+
+# The published link-unit pin: the tamatebako/tebako release whose
+# prebuilt link unit (the spec-17 driver + scoped tfs + the native
+# closure, per triplet) the legs CONSUME as a download instead of
+# building from source. The closure depends on the triplet and the
+# product release only — never on the python version. Empty = build from
+# source. A platform with no published unit misses the pin and builds
+# from source — a miss is never an error; a checksum MISMATCH is a hard
+# error, never a silent fallback (a supply-chain event, not a cache
+# miss).
+#
+# v2.1.5 is the current product line (tebako#517: the glibc-scoped
+# realpath NULL-arm reroute — musl needs none; contract unchanged at 2).
+# Verified 2026-09-02: v2.1.5 publishes units for linux-gnu-x86_64,
+# linux-musl-{x86_64,arm64}, macos-{x86_64,arm64} and
+# x86_64-windows-gnu. linux-gnu-arm64 has NO unit yet — that leg builds
+# the closure from source until the product ships one.
+link_unit_release: "v2.1.5"
+
+# The tamatebako/python SOURCE release this factory consumes
+# (tfs-python-<version>-src.tar.gz + SHA256SUMS, sha256-verified).
+# EMPTY PLACEHOLDER: the source factory has published no release yet
+# (its first tag runs release-src.yml — TODO.python/01 "Remains" #3).
+# A build leg fails closed while this is empty; the first build PR sets
+# it.
+source_release: ""
+
+# The python version catalog this factory builds and publishes. This
+# placeholder mirrors tamatebako/python's versions.yml at scaffold time
+# (2026-09-02: 3.12.14, 3.13.15, 3.14.7). The source factory owns the
+# version PINS (url/sha256/line); this catalog selects which published
+# versions the matrix grammar expands over — the same split as
+# tamatebako/ruby's versions.yml vs tebako-runtime-ruby's
+# .github/matrix.json, with the catalog kept here per TODO.python/02.
+#
+# Set grammar (tebako-runtime-ruby's semantics):
+#   catalog — every version this factory publishes
+#   full    — the tip of every supported line
+#   tidy    — the primary dogfood set (the xml2rfc driving line)
+python:
+  catalog: ["3.12.14", "3.13.15", "3.14.7"]
+  full: ["3.12.14", "3.13.15", "3.14.7"]
+  tidy: ["3.13.15"]
