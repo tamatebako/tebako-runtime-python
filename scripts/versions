@@ -1,0 +1,106 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Copyright (c) 2026 [Ribose Inc](https://www.ribose.com).
+# All rights reserved.
+# This file is a part of tamatebako
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# Emit the python version catalog and the release pins from contract.yml —
+# the single source of truth for which published CPython versions this
+# factory builds, and which tamatebako/python + tamatebako/tebako releases
+# the legs consume. Stdlib only. (The ruby factory keeps its version sets
+# in .github/matrix.json; TODO.python/02 keeps the python catalog in
+# contract.yml next to the pins.)
+#
+# Usage:
+#   scripts/versions                     # the catalog, as a JSON array
+#   scripts/versions --filter SPEC       # full | tidy | catalog | "3.12.14,3.13.15"
+#   scripts/versions --pin KEY           # a top-level pin's raw value
+#                                        # (link_unit_release | source_release |
+#                                        #  container_version | contract_version)
+#
+# Named errors, exit 64 — an unknown set keyword or version is a usage
+# error, never a silently empty set.
+
+require "json"
+require "yaml"
+
+REPO_ROOT = File.expand_path("..", __dir__).freeze
+CONTRACT_YML = File.join(REPO_ROOT, "contract.yml").freeze
+
+def usage_error(message)
+  warn "versions: #{message}"
+  exit 64
+end
+
+def contract
+  @contract ||= YAML.load_file(CONTRACT_YML)
+end
+
+def catalog
+  sets = contract.fetch("python") do
+    usage_error "#{CONTRACT_YML} carries no python: catalog (schema: schema/contract.schema.yml)"
+  end
+  sets.fetch("catalog") do
+    usage_error "#{CONTRACT_YML} python: carries no catalog key (schema: schema/contract.schema.yml)"
+  end
+end
+
+def resolve_filter(spec)
+  case spec
+  when "full", "tidy", "catalog"
+    contract.fetch("python").fetch(spec)
+  when nil, ""
+    usage_error "empty filter — expected full | tidy | catalog | a comma-separated version list"
+  else
+    versions = spec.split(",").map(&:strip).reject(&:empty?)
+    unknown = versions - catalog
+    unless unknown.empty?
+      usage_error "unknown python version(s) #{unknown.join(', ')} — " \
+                  "the catalog in contract.yml knows: #{catalog.join(', ')}"
+    end
+    versions
+  end
+end
+
+def pin(key)
+  unless contract.key?(key)
+    usage_error "#{CONTRACT_YML} carries no #{key} pin " \
+                "(known: link_unit_release, source_release, container_version, contract_version)"
+  end
+  contract[key]
+end
+
+case ARGV.shift
+when nil
+  puts JSON.generate(catalog)
+when "--filter"
+  spec = ARGV.shift || usage_error("--filter needs an argument (full | tidy | catalog | versions)")
+  puts JSON.generate(resolve_filter(spec))
+when "--pin"
+  key = ARGV.shift || usage_error("--pin needs a key (link_unit_release | source_release | ...)")
+  puts pin(key)
+else
+  usage_error "unknown arguments: #{ARGV.join(' ')} — see the usage comment in #{__FILE__}"
+end

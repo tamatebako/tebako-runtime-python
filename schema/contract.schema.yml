@@ -1,0 +1,48 @@
+# JSON Schema (draft 2020-12) for contract.yml — the bootstrap <-> runtime
+# contract version, the tebako link-unit / source-release / container pins,
+# and the python version catalog (TODO.python/02). Modeled on
+# tebako-runtime-ruby's schema/contract.schema.yml.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+title: tebako-runtime-python bootstrap <-> runtime contract
+type: object
+required: [contract_version, python]
+additionalProperties: false
+properties:
+  contract_version:
+    type: integer
+    # This factory has no contract-1 era: python runtimes are image-era
+    # (the spec-17 driver) from the first publish.
+    minimum: 2
+  container_version:
+    type: string
+    # tpkg-builder tag grammar: the moving family tag (v1) or a dated
+    # immutable tag (v1.2026.09.01). Per-leg digest pinning arrives with
+    # the first real build.
+    pattern: '^v\d+(\.\d{4}\.\d{2}\.\d{2})?$'
+    description: the tpkg-builder container tag line the POSIX legs run inside
+  link_unit_release:
+    type: string
+    pattern: '^$|^v\d+\.\d+\.\d+$'
+    description: the tamatebako/tebako release whose published link unit the legs consume (empty = build the closure from source)
+  source_release:
+    type: string
+    pattern: '^$|^v\d+\.\d+\.\d+$'
+    description: the tamatebako/python release whose tfs-python-*-src.tar.gz assets the legs consume (empty = no source release yet; build legs fail closed)
+  python:
+    type: object
+    required: [catalog, full, tidy]
+    additionalProperties: false
+    properties:
+      catalog:
+        $ref: '#/$defs/versions'
+      full:
+        $ref: '#/$defs/versions'
+      tidy:
+        $ref: '#/$defs/versions'
+$defs:
+  versions:
+    type: array
+    items:
+      type: string
+      pattern: '^\d+\.\d+\.\d+$'
+    uniqueItems: true
