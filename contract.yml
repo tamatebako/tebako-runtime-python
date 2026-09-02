@@ -74,11 +74,9 @@ link_unit_release: "v2.1.5"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src.tar.gz + SHA256SUMS, sha256-verified).
-# EMPTY PLACEHOLDER: the source factory has published no release yet
-# (its first tag runs release-src.yml — TODO.python/01 "Remains" #3).
-# A build leg fails closed while this is empty; the first build PR sets
-# it.
-source_release: ""
+# First published source release: v0.1.0 (2026-09-02 — 3.12.14,
+# 3.13.15, 3.14.7). A build leg fails closed while this is empty.
+source_release: "v0.1.0"
 
 # The python version catalog this factory builds and publishes. This
 # placeholder mirrors tamatebako/python's versions.yml at scaffold time
