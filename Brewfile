@@ -5,3 +5,4 @@
 brew "openssl@3"
 brew "pkg-config"
 brew "xz"
+brew "zlib"

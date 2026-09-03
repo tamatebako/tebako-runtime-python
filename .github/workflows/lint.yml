@@ -23,11 +23,11 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-# The skeleton lint gate (TODO.python/02 bootstrap): everything that can
-# be proven WITHOUT real builds — contract.yml against its schema, the
+# The lint gate: everything that can be proven WITHOUT real builds —
+# contract.yml against its schema + the driver-source parity arm, the
 # version catalog resolvable, the leg matrix computable, every authored
-# YAML/JSON parseable. The build legs' own gates (boot smoke, contract
-# parity) land with the real build logic.
+# YAML/JSON parseable, every authored ruby file ruby -c clean. The build
+# legs' own gates (provenance, boot smoke) live in _build-platform.yml.
 name: lint
 
 on:
@@ -78,6 +78,22 @@ jobs:
             abort "::error::empty leg matrix" if m["include"].empty?
             puts "#{m["include"].length} legs"
           '
+
+      # Every authored ruby file parses — the extensionless executables
+      # under tools/ included (a syntax error there otherwise surfaces
+      # only at a build leg's expense).
+      - name: ruby -c every authored ruby file
+        run: |
+          set -euo pipefail
+          {
+            git ls-files -- '*.rb'
+            git ls-files -- tools scripts ci | while read -r f; do
+              head -n1 "$f" | grep -q '^#!.*ruby' && printf '%s\n' "$f" || true
+            done
+          } | sort -u | while read -r f; do
+            ruby -c "$f" >/dev/null || { echo "::error::ruby -c failed: $f"; exit 1; }
+            echo "ruby -c ok: $f"
+          done
 
       - name: parse every authored YAML/JSON
         run: |

@@ -26,17 +26,26 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-# Compute the build-leg matrix for publish.yml: the python set (resolved
-# from contract.yml — the same read scripts/versions performs) x the env
-# vocabulary (.github/matrix.json — tebako-runtime-ruby's grammar), sliced
-# by the dispatch filters. Emits a GitHub Actions matrix JSON document on
-# stdout. Stdlib only.
+# Compute the build-leg matrix for _build-platform.yml / publish.yml: the
+# python set (resolved from contract.yml — the same read scripts/versions
+# performs) x the env vocabulary (.github/matrix.json — tebako-runtime-ruby's
+# grammar), sliced by the dispatch filters. Emits a GitHub Actions matrix
+# JSON document on stdout. Stdlib only.
 #
 # This is the SKELETON planner (TODO.python/02 bootstrap): it expands the
 # full cross product under the filters. The ruby factory's planner also
 # walks a build-graph.yaml so a leg runs only when something it READS
 # changed — that diff-awareness arrives with the real build logic, when
 # there are legs worth skipping.
+#
+# Usage: compute_matrix.rb [--format matrix|env|pythons]
+#   matrix  (default) the GHA matrix document {"include": [leg, ...]} —
+#           extra top-level keys are impossible (GHA would read them as
+#           matrix variables), so the other two forms exist
+#   env     the selected matrix.json rows as a JSON array (each + host_id)
+#           — the release job's EXPECTED_ENV_MATRIX
+#   pythons the selected python versions as a JSON array — the release
+#           job's EXPECTED_PYTHON_MATRIX
 #
 # Filters (env vars, mirroring the ruby factory's dispatch grammar):
 #   PYTHON_FILTER    full | tidy | catalog | comma-separated versions (default: full)
@@ -45,48 +54,61 @@
 #
 # Every leg carries:
 #   python / os / arch / host   — the matrix coordinates
-#   container_json              — the job container as a JSON document
-#                                 ("null" for the runner-native legs:
-#                                 macos, windows — tebako-ci-containers
-#                                 documents the exception), the image ref
-#                                 with contract.yml's container_version
-#                                 tag applied otherwise
+#   host_id                     — this factory's package-name platform id
+#                                 (Platform::HOST_IDS — the exe/image
+#                                 grammar tebako-runtime-<ver>-<python>-<host_id>)
+#   container                   — the tpkg-builder image ref with
+#                                 contract.yml's container_version tag
+#                                 applied, null for the runner-native legs
+#                                 (macos, windows — the documented
+#                                 tebako-ci-containers exception). The legs
+#                                 docker-run the image on the ubuntu host:
+#                                 the musl image is alpine-based and node
+#                                 actions cannot run on musl, so the
+#                                 job-level container: form is out.
 #   link_unit_pid               — the product release's platform id for
-#                                 the link-unit asset name. Owner:
+#                                 the link-unit asset name, read from
+#                                 TebakoPythonBuilder::Platform (this
+#                                 repo's single owner of the os/arch ->
+#                                 pid mapping; upstream owner:
 #                                 tamatebako/tebako release.yml's
-#                                 matrix.platform (the same mapping
-#                                 tebako-runtime-ruby's
-#                                 ci/link-unit-download.sh hardcodes —
-#                                 mirrored here, never re-invented).
+#                                 matrix.platform).
 #
-# Named errors, exit 64: an unknown platform/arch filter or a matrix.json
-# row outside the known vocabulary is a config bug, never a skipped leg.
+# Named errors, exit 64: an unknown platform/arch filter, an unknown
+# --format, or a matrix.json row outside the known vocabulary is a config
+# bug, never a skipped leg.
 
 require "json"
 require "yaml"
 
 REPO_ROOT = File.expand_path("..", __dir__).freeze
+$LOAD_PATH.unshift(File.join(REPO_ROOT, "build", "lib"))
+
+require "tebako_python_builder"
+
 CONTRACT_YML = File.join(REPO_ROOT, "contract.yml").freeze
 MATRIX_JSON = File.join(REPO_ROOT, ".github", "matrix.json").freeze
 
 PLATFORMS = %w[windows linux-gnu linux-musl macos].freeze
 ARCHES = %w[x86_64 arm64].freeze
 
-# os/arch -> the tamatebako/tebako release's link-unit platform id
-# (Owner: tamatebako/tebako release.yml matrix.platform).
-LINK_UNIT_PID = {
-  ["linux-gnu", "x86_64"] => "linux-gnu-x86_64",
-  ["linux-gnu", "arm64"] => "linux-gnu-arm64",
-  ["linux-musl", "x86_64"] => "linux-musl-x86_64",
-  ["linux-musl", "arm64"] => "linux-musl-arm64",
-  ["macos", "x86_64"] => "macos-x86_64",
-  ["macos", "arm64"] => "macos-arm64",
-  ["windows", "x86_64"] => "x86_64-windows-gnu"
-}.freeze
+# os/arch -> the tamatebako/tebako release's link-unit platform id.
+# TebakoPythonBuilder::Platform::LINK_UNIT_PIDS is this repo's single
+# owner of the mapping (shared with the local build's --link-unit-pid
+# default; upstream owner: tamatebako/tebako release.yml matrix.platform).
+LINK_UNIT_PID = TebakoPythonBuilder::Platform::LINK_UNIT_PIDS
 
 def usage_error(message)
   warn "compute_matrix: #{message}"
   exit 64
+end
+
+format = "matrix"
+if (idx = ARGV.index("--format"))
+  format = ARGV[idx + 1].to_s
+  usage_error "--format expects matrix | env | pythons" unless %w[matrix env pythons].include?(format)
+elsif !ARGV.empty?
+  usage_error "unknown argument(s): #{ARGV.join(', ')} (the only option is --format matrix|env|pythons)"
 end
 
 contract = YAML.load_file(CONTRACT_YML)
@@ -123,6 +145,7 @@ end
 env = JSON.parse(File.read(MATRIX_JSON)).fetch("env")
 
 legs = []
+selected_env = []
 env.each do |row|
   os = row.fetch("os")
   arch = row.fetch("arch")
@@ -130,6 +153,8 @@ env.each do |row|
   next unless platform_filter == "all" || platform_filter == os
   next unless arch_filter == "all" || arch_filter == arch
 
+  host_id = TebakoPythonBuilder::Platform.host_id_for(os, arch)
+  selected_env << row.merge("host_id" => host_id)
   container = row["container"] && "#{row['container']}:#{container_version}"
   pythons.each do |python|
     legs << {
@@ -137,10 +162,15 @@ env.each do |row|
       os: os,
       arch: arch,
       host: row.fetch("host"),
-      container_json: container ? JSON.generate({ image: container }) : "null",
+      host_id: host_id,
+      container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])
     }
   end
 end
 
-puts JSON.generate({ include: legs })
+case format
+when "matrix" then puts JSON.generate({ include: legs })
+when "env" then puts JSON.generate(selected_env)
+when "pythons" then puts JSON.generate(pythons)
+end

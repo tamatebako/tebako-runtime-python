@@ -28,86 +28,67 @@
 
 # Build a tebako python runtime package from the pristine CPython source
 # published by tamatebako/python (tfs-python-<version>-src.tar.gz,
-# sha256-verified against the release SHA256SUMS). The python analog of
-# tebako-runtime-ruby's tools/build_runtime.
+# sha256-verified against the release SHA256SUMS), with the spec-17
+# driver LINKED into the python3 exe (the README's LINKED-driver
+# decision). The python analog of tebako-runtime-ruby's
+# tools/build_runtime; the orchestration model is its build/lib port.
 #
-# STATUS: SKELETON (the TODO.python/02 bootstrap PR). The option contract
-# is fixed here so CI wiring and local invocation stabilize; every build
-# phase below is a named TODO and the driver FAILS CLOSED (exit 64) until
-# the real CPython build logic lands in the follow-up PRs. Do not flesh
-# phases out piecemeal — port the ruby factory's build/lib model
-# (Builder / SourceFetcher / ImagePackager / …) deliberately, one PR at
-# a time.
+# The phases (the ruby leg's stage order):
+#   1. fetch + verify    the tfs-python tarball (SourceFetcher — the
+#                        release SHA256SUMS is the trust anchor)
+#   2. link unit + tfs   download + verify link-unit-<ver>-<pid>.tar.gz
+#                        (release-API digest anchor; LinkUnit) and the
+#                        tfs CLI (published .sha256 sidecar; TfsTool),
+#                        both off contract.yml's link_unit_release pin
+#   3. configure + make  the relocatable CPython (PythonBuild: prefix =
+#                        the mount root; Modules/Setup.local pins the
+#                        static/disabled extension contract)
+#   4. driver link       the fs TU (build/resources/tebako_python_main.c)
+#                        replaces Programs/python.o via the Makefile.pre
+#                        substitution; $(TEBAKO_LIBS) carries the scoped
+#                        driver + tfs + closure (Mlibs)
+#   5. env image         the assembled layout tree (stdlib + the selected
+#                        site-packages, layout card, preload shim, L1
+#                        manifest) packed by `tfs mkimage` (the default
+#                        limnifs writer)
+#   6. package           runtime-packages/tebako-runtime-<tebako>-<python>-
+#                        <triplet>[.exe] + .tfs + sidecars (.sha256 for
+#                        the image, .abi, .contract.yaml)
+#   7. boot smoke        tools/boot_smoke (a separate entry — CI runs it
+#                        as its own step)
 #
-# The phases this driver will orchestrate (the ruby leg's stage order,
-# tebako-runtime-ruby _build-platform.yml):
-#
-#   1. fetch + verify    tfs-python-<version>-src.tar.gz from the
-#                        tamatebako/python release pinned as
-#                        contract.yml's source_release (SHA256SUMS is the
-#                        trust anchor — a checksum mismatch is a hard
-#                        error, never a refetch; an empty pin fails
-#                        closed — the source factory has published no
-#                        release yet).
-#   2. link unit         download + verify link-unit-<ver>-<pid>.tar.gz
-#                        from the tamatebako/tebako release pinned as
-#                        contract.yml's link_unit_release (port
-#                        tebako-runtime-ruby ci/link-unit-download.sh —
-#                        pin miss = build the closure from source,
-#                        checksum mismatch = hard error, never a silent
-#                        fallback).
-#   3. configure + make  the relocatable CPython build. TODO.python/01's
-#                        probe (macos-arm64): relocation via PYTHONHOME
-#                        is patch-free. Decided HERE, per OS: the
-#                        compiled-in prefix story, openssl
-#                        vendoring/static linking (the probe's caveat —
-#                        _ssl rides absolute brew paths), and the
-#                        toolchain (Brewfile on macos, msys2 ucrt64 on
-#                        windows, the baked tpkg-builder toolchain on
-#                        linux).
-#   4. driver link       link libtebako_driver.a + the native closure
-#                        into the python3 exe — the LINKED-driver
-#                        decision (README.md): the driver entry is
-#                        compiled into the interpreter, mirroring the
-#                        ruby factory's generated fs TU; exact entry
-#                        glue (how control reaches the driver before
-#                        Py_Main) is designed with the first build leg.
-#                        Boot contract: the driver sets
-#                        PYTHONHOME/PYTHONPATH from the baked mount root;
-#                        TEBAKO_MOUNT_ROOT redirect honored with exit 65
-#                        (malformed) / 78 (ungranted) — semantics
-#                        identical to ruby's, parity asserted in tests.
-#   5. env image         assemble the layout tree (stdlib + SELECTED
-#                        site-packages — the selection list lands as a
-#                        declarative YAML config, never hardcoded here)
-#                        and pack it as <package>.tfs via `tfs mkimage`
-#                        (the limnifs writer — the current default
-#                        format; a build-time factory tool, never a
-#                        runtime dependency of the shipped package).
-#   6. package           stage
-#                        runtime-packages/tebako-runtime-<tebako>-<python>-<triplet>[.exe]
-#                        + .tfs (+ the windows shared-lib sibling IF the
-#                        ucrt64 build needs one — the ruby issue-40
-#                        question, answered deliberately with the first
-#                        windows leg) + the <package>.manifest.json
-#                        shard fields (the additive image key,
-#                        interpreter paths, contract_version).
-#   7. boot smoke        TEBAKO_RUNTIME_IMAGE handoff; a stdlib import
-#                        from the mounted image; a named error on a bad
-#                        mount; exit-code parity with the ruby driver's
-#                        contract suite where the cases overlap
-#                        (TODO.python/02's acceptance — lands as spec/
-#                        with the first leg).
+# Exit codes (named, never silent): 64 usage · 103 configure · 104 build
+# · 105 install/assemble · 106 abi probe · 109 version grammar · 112
+# platform/link input · 121/122 source fetch (sha mismatch / download)
+# · 123 link-unit miss/download · 124 link-unit sha mismatch/incomplete
+# · 125 tfs CLI fetch/verify · 131 image assemble/pack · 141/143 boot
+# smoke (tools/boot_smoke).
 #
 # Usage:
 #   tools/build_runtime --python 3.13.15 [--output PATH] [--prefix DIR]
-#                       [--tebako-version X.Y.Z] [--jobs N]
+#                       [--tebako-version X.Y.Z] [--src-release TAG]
+#                       [--src-mirror URL] [--link-unit-release TAG]
+#                       [--link-unit-pid PID] [--jobs N]
 
 require "optparse"
 
 REPO_ROOT = File.expand_path("..", __dir__).freeze
+$LOAD_PATH.unshift(File.join(REPO_ROOT, "build", "lib"))
 
-options = { python: nil, output: nil, prefix: File.join(REPO_ROOT, ".build"), tebako_version: nil, jobs: nil }
+require "tebako_python_builder"
+
+options = {
+  python: nil,
+  output: nil,
+  prefix: File.join(REPO_ROOT, ".build"),
+  tebako_version: nil,
+  src_release: nil,
+  src_mirror: nil,
+  link_unit_release: nil,
+  link_unit_pid: nil,
+  jobs: nil
+}
+
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: tools/build_runtime [options]"
   opts.on("-P", "--python VERSION", "CPython version to build (e.g. 3.13.15), required") { |v| options[:python] = v }
@@ -117,6 +98,18 @@ parser = OptionParser.new do |opts|
   end
   opts.on("-p", "--prefix DIR", "Build prefix holding deps and the build trees (default: #{options[:prefix]})") { |v| options[:prefix] = v }
   opts.on("--tebako-version VERSION", "Runtime package version (default: the VERSION file)") { |v| options[:tebako_version] = v }
+  opts.on("--src-release TAG", "tamatebako/python release tag (default: contract.yml's source_release)") do |v|
+    options[:src_release] = v
+  end
+  opts.on("--src-mirror URL", "Base URL override for the source assets (file:// URLs work)") do |v|
+    options[:src_mirror] = v
+  end
+  opts.on("--link-unit-release TAG", "tamatebako/tebako release tag for the link unit + tfs CLI " \
+                                     "(default: contract.yml's link_unit_release)") do |v|
+    options[:link_unit_release] = v
+  end
+  opts.on("--link-unit-pid PID", "The product release's platform id for the link-unit asset " \
+                                 "(default: the detected host's)") { |v| options[:link_unit_pid] = v }
   opts.on("-j", "--jobs N", Integer, "Build parallelism (default: detected core count)") { |v| options[:jobs] = v }
   opts.on("-h", "--help", "Print this help") do
     puts opts
@@ -125,13 +118,29 @@ parser = OptionParser.new do |opts|
 end
 parser.parse!
 
-if options[:python].nil?
-  puts "Missing required option: --python VERSION"
-  puts parser
-  exit 64
-end
+begin
+  if options[:python].nil?
+    puts "Missing required option: --python VERSION"
+    puts parser
+    exit 64
+  end
 
-warn "build_runtime: SKELETON — phases 1-7 (fetch/verify, link unit, " \
-     "configure+make, driver link, env image, package, boot smoke) land " \
-     "in the TODO.python/02 follow-up PRs; see the phase plan in this file."
-exit 64
+  tebako_version = options[:tebako_version] || File.read(File.join(REPO_ROOT, "VERSION")).strip
+  builder = TebakoPythonBuilder::Builder.new(
+    repo_root: REPO_ROOT,
+    python_version: options[:python],
+    tebako_version: tebako_version,
+    prefix: options[:prefix],
+    output: options[:output],
+    jobs: options[:jobs],
+    src_release: options[:src_release],
+    src_mirror: options[:src_mirror],
+    link_unit_release: options[:link_unit_release],
+    link_unit_pid: options[:link_unit_pid]
+  )
+  builder.run
+rescue TebakoPythonBuilder::Error => e
+  puts "build_runtime failed: #{e.message} [#{e.error_code}]"
+  exit(e.error_code)
+end
+exit(0)

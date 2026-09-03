@@ -1,0 +1,333 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Copyright (c) 2026 [Ribose Inc](https://www.ribose.com).
+# All rights reserved.
+# This file is a part of tamatebako
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# Boot smoke for a built tebako python runtime (TODO.python/02's
+# acceptance, the ruby factory's boot_smoke role — stdlib-only here, no
+# rspec surface): boots the built exe against its sibling env image and
+# asserts the driver contract end to end. Scenarios:
+#
+#   bare                 no image: the exe CANNOT boot alone — the
+#                        stdlib is image-resident (the two-artifact
+#                        model), so the driver warns about the bare
+#                        boot and the interpreter fails on its own
+#                        terms (non-zero exit; every platform)
+#   boot                 TEBAKO_RUNTIME_IMAGE handoff: stdlib imports
+#                        (json/zlib/ssl) off the mounted image, sys.prefix
+#                        == the mount root                       [POSIX]
+#   payload              --tebako-image <fixture>:-:/app +
+#                        --tebako-entry /bin/hello.py (the entry is an
+#                        IN-IMAGE path — the driver joins it with the
+#                        declared mount): a stdlib-importing script runs
+#                        from the mounted payload                  [POSIX]
+#   bad-mount            --tebako-image <missing>:-:/nope -> exit 69
+#                        (the unavailable image, named on stderr)
+#   mount-root-override  TEBAKO_MOUNT_ROOT=<abs>: boots, sys.prefix ==
+#                        the override (the image grants it)      [POSIX]
+#   mount-root-malformed TEBAKO_MOUNT_ROOT=relative/path -> exit 65
+#   override-ungranted   TEBAKO_MOUNT_ROOT against an env image whose
+#                        layout lacks the grant -> exit 78
+#
+# POSIX legs run the full set; the windows leg runs bare + the named-
+# error trio (bad-mount, mount-root-malformed, override-ungranted) — the
+# in-image imports are roadmap 30 phase 2 there (README's windows
+# boundary).
+#
+# Usage:
+#   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
+#                    [--scenario all|bare|boot|payload|bad-mount|
+#                                mount-root-override|mount-root-malformed|
+#                                override-ungranted]
+#
+# Exit codes: 0 green · 141 usage/resolution · 143 a scenario failed.
+
+require "fileutils"
+require "open3"
+require "optparse"
+require "timeout"
+require "tmpdir"
+
+REPO_ROOT = File.expand_path("..", __dir__).freeze
+$LOAD_PATH.unshift(File.join(REPO_ROOT, "build", "lib"))
+
+require "tebako_python_builder"
+
+BOOT_TIMEOUT = 60
+IMAGE_SUFFIXES = %w[.tfs .dwarfs].freeze
+MARKER_SUFFIXES = %w[.abi .sha256 .origin .yaml .dll].freeze
+NON_EXECUTABLE_SUFFIXES = (IMAGE_SUFFIXES + MARKER_SUFFIXES).freeze
+
+# The child env is REPLACED, not inherited: the python/host-path variables
+# and any tebako/preload leftovers a host setup would leak in are scrubbed
+# (the ruby factory's msys GEM_HOME lesson).
+ENV_SCRUBBED = %w[PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE
+                  LD_PRELOAD DYLD_INSERT_LIBRARIES DYLD_FALLBACK_LIBRARY_PATH].freeze
+
+def usage_error(message)
+  warn "boot_smoke: #{message}"
+  exit 141
+end
+
+options = { runtime_root: ENV.fetch("TEBAKO_RUNTIME_ROOT", nil), exe: nil, tfs: nil, scenario: "all" }
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: tools/boot_smoke [options]"
+  opts.on("--runtime-root DIR", "Directory holding exactly one tebako-runtime-* executable") do |v|
+    options[:runtime_root] = v
+  end
+  opts.on("--exe PATH", "The runtime executable itself (wins over --runtime-root)") { |v| options[:exe] = v }
+  opts.on("--tfs PATH", "tfs CLI for the fixture images (default: TEBAKO_TFS, then tfs on PATH)") do |v|
+    options[:tfs] = v
+  end
+  opts.on("--scenario NAME", "One scenario to run (default: all)") { |v| options[:scenario] = v }
+  opts.on("-h", "--help", "Print this help") do
+    puts opts
+    exit 0
+  end
+end
+parser.parse!
+
+platform = TebakoPythonBuilder::Platform.new
+
+# --- artifact resolution ---------------------------------------------------
+
+def resolve_executable(root, exe)
+  return File.expand_path(exe) if exe && File.file?(exe)
+  usage_error("--exe #{exe.inspect} is not a file") if exe
+  usage_error("no --runtime-root/--exe (TEBAKO_RUNTIME_ROOT unset)") if root.to_s.empty? || !File.exist?(root)
+  return File.expand_path(root) if File.file?(root)
+
+  candidates = Dir.glob(File.join(root, "tebako-runtime-*"))
+                  .select { |path| File.file?(path) && !NON_EXECUTABLE_SUFFIXES.include?(File.extname(path)) }
+  usage_error("no tebako runtime executable under #{root}") if candidates.empty?
+  usage_error("several runtime executables under #{root} (#{candidates.join(", ")})") if candidates.length > 1
+
+  File.expand_path(candidates.first)
+end
+
+def resolve_tfs(requested)
+  candidate = requested || ENV.fetch("TEBAKO_TFS", nil) || "tfs"
+  return candidate if File.file?(candidate) && File.executable?(candidate)
+
+  ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).each do |dir|
+    path = File.join(dir, candidate)
+    return path if File.file?(path) && File.executable?(path)
+  end
+  usage_error("no tfs CLI resolvable (#{candidate}) — the fixture-image scenarios need it " \
+              "(--tfs / TEBAKO_TFS; tools/build_runtime already fetched one under .build)")
+end
+
+# --- scenario drivers ------------------------------------------------------
+
+def boot(executable, argv, env_extra)
+  Dir.mktmpdir("tebako-python-boot-smoke") do |cwd|
+    env = ENV_SCRUBBED.to_h { |key| [key, nil] }
+    ENV.each_key { |key| env[key] = nil if key.start_with?("TEBAKO_") }
+    env.merge!(env_extra)
+    Timeout.timeout(BOOT_TIMEOUT) do
+      Open3.capture3(env, executable, *argv, chdir: cwd)
+    end
+  end
+rescue Timeout::Error
+  ["", "boot_smoke: runtime did not exit within #{BOOT_TIMEOUT}s", nil]
+end
+
+$failures = 0
+def check(name, ok, detail)
+  if ok
+    puts "ok   #{name}"
+  else
+    puts "FAIL #{name}: #{detail}"
+    $failures += 1
+  end
+end
+
+def expect_exit(name, out, err, status, code)
+  check(name, status&.exitstatus == code,
+        "expected exit #{code}, got #{status&.exitstatus.inspect}\nstdout: #{out}\nstderr: #{err}")
+end
+
+def expect_ok(name, out, err, status, marker)
+  ok = status&.exitstatus&.zero? && out.include?(marker)
+  check(name, ok, "expected exit 0 + #{marker.inspect}\nstdout: #{out}\nstderr: #{err}")
+end
+
+# The payload fixture: a stdlib-importing script riding /app.
+def payload_fixture(tfs, dir)
+  tree = File.join(dir, "payload-tree")
+  FileUtils.mkdir_p(File.join(tree, "bin"))
+  File.write(File.join(tree, "bin", "hello.py"), <<~PY)
+    import json, ssl, sys, zlib
+    print("PAYLOAD-OK")
+    print("file:", __file__)
+    print("prefix:", sys.prefix)
+    print("json:", json.dumps({"ok": True}))
+    print("ssl:", ssl.OPENSSL_VERSION)
+    print("zlib:", zlib.ZLIB_VERSION)
+  PY
+  image = File.join(dir, "payload.tfs")
+  out, st = Open3.capture2e(tfs, "mkimage", tree, "-o", image)
+  usage_error("fixture image build failed: #{out}") unless st.exitstatus&.zero? && File.file?(image)
+
+  image
+end
+
+# The ungranted env-image fixture: a layout card WITHOUT the
+# mount_root_override grant (and no preload_shim — the override refusal
+# must fire before any interpreter handoff).
+def ungranted_fixture(tfs, dir, platform)
+  tree = File.join(dir, "ungranted-tree")
+  FileUtils.mkdir_p(File.join(tree, "lib", "tebako"))
+  File.write(File.join(tree, "lib", "tebako", "layout.yaml"), <<~YAML)
+    schema: layout
+    schema_version: 1
+    era: 2
+    image_layout: 1
+    mount_root: #{platform.mount_root}
+    interpreter_api_version: "3.13"
+  YAML
+  image = File.join(dir, "ungranted.tfs")
+  out, st = Open3.capture2e(tfs, "mkimage", tree, "-o", image)
+  usage_error("ungranted fixture image build failed: #{out}") unless st.exitstatus&.zero? && File.file?(image)
+
+  image
+end
+
+KNOWN_SCENARIOS = %w[bare boot payload bad-mount mount-root-override mount-root-malformed
+                     override-ungranted].freeze
+# Scenarios that build fixture images with the tfs CLI.
+TFS_SCENARIOS = %w[payload override-ungranted].freeze
+
+def selected_scenarios(platform, only)
+  selected = []
+  selected += %w[bare] if %w[all bare].include?(only)
+  if platform.posix?
+    selected += %w[boot payload mount-root-override] if %w[all boot payload mount-root-override].include?(only)
+  end
+  selected += %w[bad-mount mount-root-malformed override-ungranted] if
+    %w[all bad-mount mount-root-malformed override-ungranted].include?(only)
+
+  if selected.empty? && only != "all"
+    # A single named scenario was requested; an explicit ask wins over the
+    # platform boundary (a maintainer forcing one scenario for debugging).
+    usage_error("unknown scenario '#{only}' (known: #{KNOWN_SCENARIOS.join(", ")})") unless KNOWN_SCENARIOS.include?(only)
+
+    selected = [only]
+  end
+  usage_error("no scenarios selected") if selected.empty?
+
+  selected
+end
+
+def run_scenarios(executable, platform, selected, tfs:) # rubocop:disable Metrics/MethodLength
+  image = "#{executable.sub(/\.exe\z/, "")}.tfs"
+  probe = <<~PY
+    import json, ssl, sys, zlib
+    print("BOOT-OK")
+    print("prefix:", sys.prefix)
+    print("ssl:", ssl.OPENSSL_VERSION)
+    print("zlib:", zlib.ZLIB_VERSION)
+    print("json:", json.dumps({"ok": True}))
+  PY
+
+  Dir.mktmpdir("tebako-python-smoke-fixtures") do |dir|
+    selected.each do |scenario|
+      case scenario
+      when "bare"
+        # The two-artifact model: the exe alone is NOT a dev-mode
+        # interpreter — the stdlib lives in the env image, so a bare
+        # boot can only fail (getpath's compiled-in prefix resolves
+        # empty and the encodings import dies). What this scenario pins
+        # is the DRIVER's half of the contract: it names the bare boot
+        # on stderr, then the interpreter fails on its own terms.
+        out, err, st = boot(executable, ["-c", "print('unreached')"], {})
+        check("bare: non-zero exit (the stdlib is image-resident)",
+              !st.nil? && !st.exitstatus&.zero?, "stdout: #{out}\nstderr: #{err}")
+        check("bare: the driver names the bare boot",
+              err.include?("TEBAKO_RUNTIME_IMAGE is not set"), "stderr: #{err}")
+        check("bare: the interpreter ran and died on the missing stdlib",
+              err.include?("encodings"), "stderr: #{err}")
+      when "boot"
+        unless File.file?(image)
+          check("boot", false, "no sibling env image #{image}")
+          next
+        end
+        out, err, st = boot(executable, ["-c", probe], { "TEBAKO_RUNTIME_IMAGE" => image })
+        expect_ok("boot", out, err, st, "BOOT-OK")
+        check("boot: prefix is the mount root", out.include?("prefix: #{platform.mount_root}"),
+              "stdout: #{out}\nstderr: #{err}")
+      when "payload"
+        fixture = payload_fixture(tfs, dir)
+        # The entry is an IN-IMAGE path (spec 17): the driver joins it
+        # with the declared mount, so the VFS spelling the script sees
+        # (__file__) is /app/bin/hello.py — the check below.
+        out, err, st = boot(executable,
+                            ["--tebako-image", "#{fixture}:-:/app", "--tebako-entry", "/bin/hello.py"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image })
+        expect_ok("payload", out, err, st, "PAYLOAD-OK")
+        check("payload: entry file rides the mount", out.include?("file: /app/bin/hello.py"),
+              "stdout: #{out}\nstderr: #{err}")
+      when "bad-mount"
+        missing = File.join(dir, "no-such-image.tfs")
+        out, err, st = boot(executable,
+                            ["--tebako-image", "#{missing}:-:/nope", "--tebako-entry", "/nope/x.py"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image })
+        expect_exit("bad-mount", out, err, st, 69)
+        check("bad-mount: the image is named", err.include?(missing), "stderr: #{err}")
+      when "mount-root-override"
+        override = File.join(dir, "override-root")
+        out, err, st = boot(executable, ["-c", probe],
+                            { "TEBAKO_RUNTIME_IMAGE" => image, "TEBAKO_MOUNT_ROOT" => override })
+        expect_ok("mount-root-override", out, err, st, "BOOT-OK")
+        check("mount-root-override: prefix follows the override", out.include?("prefix: #{override}"),
+              "stdout: #{out}\nstderr: #{err}")
+      when "mount-root-malformed"
+        out, err, st = boot(executable, ["-c", "print('unreached')"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image, "TEBAKO_MOUNT_ROOT" => "relative/path" })
+        expect_exit("mount-root-malformed", out, err, st, 65)
+        check("mount-root-malformed: the variable is named", err.include?("TEBAKO_MOUNT_ROOT"), "stderr: #{err}")
+      when "override-ungranted"
+        fixture = ungranted_fixture(tfs, dir, platform)
+        out, err, st = boot(executable, ["-c", "print('unreached')"],
+                            { "TEBAKO_RUNTIME_IMAGE" => fixture, "TEBAKO_MOUNT_ROOT" => File.join(dir, "elsewhere") })
+        expect_exit("override-ungranted", out, err, st, 78)
+      end
+    end
+  end
+end
+
+executable = resolve_executable(options[:runtime_root], options[:exe])
+puts "-- Boot smoke: #{executable} (#{platform.host_id})"
+selected = selected_scenarios(platform, options[:scenario])
+tfs = (selected & TFS_SCENARIOS).any? ? resolve_tfs(options[:tfs]) : nil
+run_scenarios(executable, platform, selected, tfs: tfs)
+
+if $failures.positive?
+  puts "#{$failures} scenario check(s) failed"
+  exit 143
+end
+puts "boot smoke: all green"
+exit 0
