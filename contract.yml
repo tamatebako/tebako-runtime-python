@@ -58,11 +58,11 @@ container_version: "v1"
 # prebuilt link unit (the spec-17 driver + scoped tfs + the native
 # closure, per triplet) the legs CONSUME as a download instead of
 # building from source. The closure depends on the triplet and the
-# product release only — never on the python version. Empty = build from
-# source. A platform with no published unit misses the pin and builds
-# from source — a miss is never an error; a checksum MISMATCH is a hard
-# error, never a silent fallback (a supply-chain event, not a cache
-# miss).
+# product release only — never on the python version. An empty pin, a
+# missing asset, or a checksum MISMATCH are all hard named errors —
+# never a silent fallback (this factory has no source-build path for
+# the driver stack; a supply-chain event is reported, not worked
+# around).
 #
 # v2.1.5 is the current product line (tebako#517: the glibc-scoped
 # realpath NULL-arm reroute — musl needs none; contract unchanged at 2).

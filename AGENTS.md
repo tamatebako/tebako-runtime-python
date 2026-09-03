@@ -16,15 +16,24 @@ workspace root) — read it first. The short version as applied here:
 - **YAML** for all authored config/manifests; named errors and named
   exit codes, never silent fallbacks.
 
-## Repo status: SKELETON
+## Repo status: builds green, unpublished
 
-`tools/build_runtime` and the publish.yml build/release steps are TODO
-boundaries that **fail closed (exit 64)**. Real CPython build logic
-lands only via the TODO.python/02 follow-up PRs — do not flesh phases
-out piecemeal; port tebako-runtime-ruby's `build/lib` model
-deliberately. The linked-driver decision and its rationale are recorded
-in README.md — do not reopen it here; the wrapper pattern (spec 29) is
-the java stream's.
+`tools/build_runtime` is implemented (the tebako-runtime-ruby `build/lib`
+port): fetch/verify → configure/make → driver link → env-image pack →
+packaging → sidecars, gated by `ci/check_symbol_provenance.sh` and
+`tools/boot_smoke`. CI carries the ruby factory's shape:
+`_build-platform.yml` + the four `build-*.yml` triggers, and
+`publish.yml` drives `scripts/upload_release.rb` per platform. The
+macos-arm64 leg is dogfooded locally green (7/7 boot-smoke scenarios).
+
+Nothing has published: releases stay draft-gated until the TODO.python
+chain is proven (the xml2rfc payload, 03). The pinned
+`link_unit_release: "v2.1.5"` predates the libtfs-preload `fcntl`
+interposition fix (tamatebako/tebako#524) — POSIX boot-smoke CI legs are
+expected red until a tebako release carries it and the pin moves. The
+linked-driver decision and the preload-shim re-exec rationale are
+recorded in README.md — do not reopen them here; the wrapper pattern
+(spec 29) is the java stream's.
 
 ## Repo-local gotchas
 

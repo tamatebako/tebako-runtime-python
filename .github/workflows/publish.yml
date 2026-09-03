@@ -23,30 +23,34 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-# The release coordinator — SKELETON (the TODO.python/02 bootstrap PR).
-#
-# Mirrors tebako-runtime-ruby's publish.yml grammar: the three
-# first-class slice shapes —
+# The release coordinator (tebako-runtime-ruby's publish.yml grammar).
+# The explicit, operator-facing entry point — the three first-class slice
+# shapes:
 #   one python on every platform  (python_filter=<version>, platform=all)
 #   one platform, every python    (python_filter=full|tidy|catalog, platform=<one>)
 #   one python on one platform    (python_filter=<version>, platform=<one>)
 # plus the era baseline (python_filter=catalog, platform=all).
 #
-# The build legs and the release step FAIL CLOSED at their TODO
-# boundaries (exit 64) until the real CPython build logic lands — an
-# accidental dispatch never half-builds or half-publishes.
+# Every slice fans out to _build-platform.yml to BUILD. Publishing lives
+# ONLY here, in the single `release` job that runs once per coordinator
+# run after every platform build: the release is one shared resource, so
+# publishing must serialize — and serializing per-platform publish jobs
+# through a shared concurrency group displaced (cancelled) queued
+# publishes (the 2026-08-09 lesson). One release job per run means a run
+# publishes every platform it built, never fewer. Each per-platform
+# invocation writes ONLY names that platform owns (its payload assets +
+# each package's .sha256 sidecars and .manifest.json shard — issue 139's
+# per-asset metadata, no merge path); the shared monolithic conveniences
+# (manifest.json / SHA256SUMS.txt) and the release notes are derived from
+# the release's own shards + asset listing by the ONE finalize invocation
+# that runs after every platform landed.
 #
-# Deliberate deviations from the ruby coordinator, at skeleton scope:
-#   - ONE matrix build job instead of the _build-platform.yml reusable
-#     fan-out. The per-platform reusable split arrives WITH the real
-#     build logic, when per-platform divergence (msys2 provisioning,
-#     container vs host legs, the boot smoke) justifies it — port the
-#     ruby shape then, not before.
-#   - publish defaults to FALSE (ruby: true). This factory has no
-#     release yet; the first publish is an explicit operator act.
-#   - The single serialized release job below IS the ruby shape from day
-#     one (the 2026-08-09 lesson: per-platform publish jobs serialized
-#     through a shared concurrency group displaced queued publishes).
+# Deliberate deviations from the ruby coordinator:
+#   - publish defaults to FALSE (ruby: true). This factory has no release
+#     yet; the first publish is an explicit operator act.
+#   - No repository_dispatch trigger yet: the python source factory does
+#     not dispatch "tebako release" here (the ruby chain's pin-moved
+#     rebuilds). The trigger arrives when tamatebako/python wires it.
 name: publish
 
 on:
@@ -65,11 +69,15 @@ on:
         type: string
         default: 'all'
       publish:
-        description: 'Publish this run''s packages to the release (NOT WIRED yet — the release job fails closed at its TODO boundary)'
+        description: 'Publish this run''s packages to the release'
+        type: boolean
+        default: false
+      force_rebuild:
+        description: 'Re-upload even unchanged assets (the one exception to per-name byte-immutability; the ruby coordinator declares this input but never wires it — here it reaches upload_release.rb as FORCE_REBUILD)'
         type: boolean
         default: false
       audit:
-        description: 'Audit only: verify the release against the expected matrix, no builds/uploads (NOT WIRED yet)'
+        description: 'Audit only: verify the release against the expected matrix, no builds/uploads'
         type: boolean
         default: false
 
@@ -77,141 +85,157 @@ permissions:
   contents: write
 
 jobs:
-  # The plan stage: contract.yml (catalog + pins) x .github/matrix.json
-  # (env vocabulary) under the dispatch filters. Every downstream value
-  # flows from these outputs — workflow YAML never hardcodes a version,
-  # a tag, or a SHA (ecosystem SSOT invariant).
-  plan:
-    name: Compute the leg matrix
-    runs-on: ubuntu-latest
-    outputs:
-      legs: ${{ steps.emit.outputs.legs }}
-      leg_count: ${{ steps.emit.outputs.leg_count }}
-      tebako_version: ${{ steps.emit.outputs.tebako_version }}
-      link_unit_release: ${{ steps.emit.outputs.link_unit_release }}
-      source_release: ${{ steps.emit.outputs.source_release }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
-        with:
-          ruby-version: '3.3'
-      - id: emit
-        env:
-          PYTHON_FILTER: ${{ inputs.python_filter }}
-          PLATFORM_FILTER: ${{ inputs.platform }}
-          ARCH_FILTER: ${{ inputs.arch_filter }}
-        run: |
-          set -euo pipefail
-          legs=$(scripts/compute_matrix.rb)
-          count=$(jq '.include | length' <<< "$legs")
-          {
-            echo "legs=$legs"
-            echo "leg_count=$count"
-            echo "tebako_version=$(cat VERSION)"
-            echo "link_unit_release=$(scripts/versions --pin link_unit_release)"
-            echo "source_release=$(scripts/versions --pin source_release)"
-          } >> "$GITHUB_OUTPUT"
-          # Mirror the plan to the LOG: values written only to
-          # $GITHUB_OUTPUT leave no diagnosable record when the legs skip.
-          echo "plan: $count legs (python=${PYTHON_FILTER} platform=${PLATFORM_FILTER} arch=${ARCH_FILTER})"
-          jq -r '.include[] | "  \(.python) \(.os)/\(.arch) on \(.host)"' <<< "$legs"
+  windows:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      platform: windows
+      python_filter: ${{ inputs.python_filter }}
+      arch_filter: ${{ inputs.arch_filter }}
+      audit: ${{ inputs.audit }}
+    secrets: inherit
 
-  build:
-    name: ${{ matrix.python }} / ${{ matrix.os }}-${{ matrix.arch }}
-    needs: plan
-    # An unguarded empty matrix poisons the run conclusion.
-    if: needs.plan.outputs.leg_count != '0'
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.legs) }}
-    runs-on: ${{ matrix.host }}
-    # "null" for the runner-native legs (macos, windows — the documented
-    # tebako-ci-containers exception); the tpkg-builder image ref with
-    # contract.yml's container_version tag otherwise.
-    container: ${{ fromJSON(matrix.container_json) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  linux-gnu:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'linux-gnu' }}
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      platform: linux-gnu
+      python_filter: ${{ inputs.python_filter }}
+      arch_filter: ${{ inputs.arch_filter }}
+      audit: ${{ inputs.audit }}
+    secrets: inherit
 
-      # TODO.python/02 follow-ups — the real leg, in the ruby factory's
-      # stage order (tebako-runtime-ruby _build-platform.yml), all driven
-      # by tools/build_runtime's phases:
-      #   1. fetch + verify tfs-python-<python>-src.tar.gz from the
-      #      tamatebako/python release named by the plan's source_release
-      #      output (FAILS CLOSED while the pin is empty — the source
-      #      factory has published no release yet)
-      #   2. link unit: link-unit-<ver>-<link_unit_pid>.tar.gz off the
-      #      tamatebako/tebako release named by the plan's
-      #      link_unit_release output (port tebako-runtime-ruby
-      #      ci/link-unit-download.sh; a pin miss builds from source, a
-      #      checksum mismatch is a hard error)
-      #   3. configure && make the relocatable CPython (per-OS
-      #      provisioning: Brewfile on macos, msys2 ucrt64 on windows,
-      #      the baked tpkg-builder toolchain on linux)
-      #   4. link the spec-17 driver into python3 (tools/build_runtime
-      #      phase 4 — the LINKED-driver decision, README.md)
-      #   5. pack the env image: stdlib + selected site-packages -> .tfs
-      #      via tfs mkimage (the limnifs writer)
-      #   6. boot smoke: TEBAKO_RUNTIME_IMAGE handoff, PYTHONHOME/
-      #      PYTHONPATH from the baked mount root, TEBAKO_MOUNT_ROOT
-      #      exit 65/78 parity with ruby's
-      - name: Build the runtime (TODO boundary — fails closed)
-        run: |
-          echo "::notice::leg ${{ matrix.python }} / ${{ matrix.os }}-${{ matrix.arch }} (link-unit pid ${{ matrix.link_unit_pid }}, host ${{ matrix.host }})"
-          echo "::error::real CPython build logic lands in the TODO.python/02 follow-up PRs — the phase plan is tools/build_runtime's header"
-          exit 64
+  linux-musl:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'linux-musl' }}
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      platform: linux-musl
+      python_filter: ${{ inputs.python_filter }}
+      arch_filter: ${{ inputs.arch_filter }}
+      audit: ${{ inputs.audit }}
+    secrets: inherit
 
-      # The artifact contract the release job consumes: one artifact per
-      # platform-arch workspace (tebako-runtime-ruby's runtime-packages-*
-      # pattern). Unreachable until the TODO boundary above is replaced.
-      - name: Stage the runtime packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: runtime-packages-${{ matrix.os }}-${{ matrix.arch }}
-          path: runtime-packages/
+  macos:
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      platform: macos
+      python_filter: ${{ inputs.python_filter }}
+      arch_filter: ${{ inputs.arch_filter }}
+      audit: ${{ inputs.audit }}
+    secrets: inherit
 
-  # The ONE release job per coordinator run. Publishing writes to the
-  # single shared release, so it must serialize — running the publishes
-  # sequentially inside ONE job gives the release its serialization with
-  # zero group contention (the ruby factory's publish.yml carries the
-  # full rationale).
+  # The ONE release job per coordinator run (the serialization rationale
+  # is the header's). A runner that dies mid-publish never reports, and
+  # the job-level group (cancel-in-progress: false) then holds every
+  # later publish hostage for the cap — bound it.
   release:
     name: Publish the runtime packages
-    needs: [plan, build]
+    needs: [windows, linux-gnu, linux-musl, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
       group: publish-runtime-packages
       cancel-in-progress: false
-    # publish requires green builds; audit is a read-only probe of the
-    # release against the expected matrix and needs none.
-    if: ${{ always() && !cancelled() && ((inputs.publish && needs.build.result == 'success') || inputs.audit) }}
+    # Run when the run asked to publish or audit and at least one
+    # platform actually built (an audit builds nothing but still computes
+    # every selected platform's expectations).
+    if: ${{ always() && !cancelled() && (inputs.publish || inputs.audit) && (needs.windows.result == 'success' || needs.linux-gnu.result == 'success' || needs.linux-musl.result == 'success' || needs.macos.result == 'success') }}
     env:
       GITHUB_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Every platform's packages land in one workspace; the idempotent
+      # skip keeps unchanged assets from re-uploading, and each platform
+      # invocation writes only its own packages' metadata (sidecars +
+      # shards — issue 139), so platforms never touch a shared file.
       - name: Download the runtime packages
-        if: ${{ inputs.publish }}
+        if: ${{ !inputs.audit }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: runtime-packages-*
           path: runtime-packages
           merge-multiple: true
 
-      # TODO.python/02 follow-up: port tebako-runtime-ruby
-      # scripts/upload_release.rb — per-asset .sha256 sidecars (the store
-      # trust-anchor shape), per-package .manifest.json shards (the
-      # additive image key + interpreter paths + contract_version), and
-      # the derived monoliths (manifest.json / SHA256SUMS.txt) + release
-      # notes from the ONE finalize pass. The issue-139 layout from day
-      # one — no legacy monolith-only mode.
-      - name: Update the release (TODO boundary — fails closed)
+      - name: Setup Ruby gems
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      # One upload_release.rb per platform that built, sequential inside
+      # this job. Each platform's completeness gate reads its own matrix.
+      # The finalize pass runs LAST: it derives the monolithic
+      # conveniences (manifest.json / SHA256SUMS.txt) and the release
+      # notes from the release's own shards + asset listing — the one
+      # place the shared files are (re)written, from ground truth only,
+      # never from a job's local knowledge (issue 139).
+      - name: Update the release, per platform
         env:
           AUDIT_ONLY: ${{ inputs.audit }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          WIN_RUN: ${{ needs.windows.outputs.run }}
+          WIN_VER: ${{ needs.windows.outputs.tebako_version }}
+          WIN_ENV: ${{ needs.windows.outputs.env_matrix }}
+          WIN_PYTHON: ${{ needs.windows.outputs.python_matrix }}
+          GNU_RUN: ${{ needs.linux-gnu.outputs.run }}
+          GNU_VER: ${{ needs.linux-gnu.outputs.tebako_version }}
+          GNU_ENV: ${{ needs.linux-gnu.outputs.env_matrix }}
+          GNU_PYTHON: ${{ needs.linux-gnu.outputs.python_matrix }}
+          MUSL_RUN: ${{ needs.linux-musl.outputs.run }}
+          MUSL_VER: ${{ needs.linux-musl.outputs.tebako_version }}
+          MUSL_ENV: ${{ needs.linux-musl.outputs.env_matrix }}
+          MUSL_PYTHON: ${{ needs.linux-musl.outputs.python_matrix }}
+          MAC_RUN: ${{ needs.macos.outputs.run }}
+          MAC_VER: ${{ needs.macos.outputs.tebako_version }}
+          MAC_ENV: ${{ needs.macos.outputs.env_matrix }}
+          MAC_PYTHON: ${{ needs.macos.outputs.python_matrix }}
         run: |
-          if [ "$AUDIT_ONLY" = "true" ]; then
-            echo "::notice::audit is NOT WIRED yet — there is no release to verify (the expected matrix: ${{ needs.plan.outputs.leg_count }} legs)"
-            exit 0
+          set -uo pipefail
+          # Publish every platform that built green; THEN fail loudly naming
+          # any selected platform that did not — a green platform's packages
+          # always land, and a coverage gap never goes unreported.
+          upload_failed=""
+          publish_platform() {
+            local run="$1" ver="$2" envm="$3" pym="$4" name="$5"
+            if [ "$run" != "true" ]; then
+              echo "--- $name did not build this run; skipping its merge"
+              return 0
+            fi
+            echo "=== publishing $name (tebako $ver)"
+            TEBAKO_VERSION="$ver" EXPECTED_ENV_MATRIX="$envm" EXPECTED_PYTHON_MATRIX="$pym" \
+              ./scripts/upload_release.rb || upload_failed="$upload_failed $name"
+          }
+          publish_platform "$WIN_RUN"  "$WIN_VER"  "$WIN_ENV"  "$WIN_PYTHON"  windows
+          publish_platform "$GNU_RUN"  "$GNU_VER"  "$GNU_ENV"  "$GNU_PYTHON"  linux-gnu
+          publish_platform "$MUSL_RUN" "$MUSL_VER" "$MUSL_ENV" "$MUSL_PYTHON" linux-musl
+          publish_platform "$MAC_RUN"  "$MAC_VER"  "$MAC_ENV"  "$MAC_PYTHON"  macos
+          # The finalize pass (skipped on audit-only runs, which mutate
+          # nothing): one tebako version per coordinator run, so the first
+          # platform that built names it.
+          if [ "${AUDIT_ONLY:-false}" != "true" ]; then
+            FIN_VER="${WIN_VER:-${GNU_VER:-${MUSL_VER:-${MAC_VER:-}}}}"
+            if [ -n "$FIN_VER" ]; then
+              echo "=== finalizing (tebako $FIN_VER)"
+              TEBAKO_VERSION="$FIN_VER" FINALIZE_ONLY=true ./scripts/upload_release.rb || upload_failed="$upload_failed finalize"
+            fi
           fi
-          echo "::error::release assembly (the upload_release.rb port) lands in a TODO.python/02 follow-up PR"
-          exit 64
+          failed=""
+          mark() { # $1=selected? $2=result $3=name
+            if [ "$1" = "true" ] && [ "$2" != "success" ] && [ "$2" != "skipped" ]; then
+              failed="$failed $3"
+            fi
+          }
+          mark "${{ inputs.platform == 'all' || inputs.platform == 'windows' }}"    "${{ needs.windows.result }}"    windows
+          mark "${{ inputs.platform == 'all' || inputs.platform == 'linux-gnu' }}"  "${{ needs.linux-gnu.result }}"  linux-gnu
+          mark "${{ inputs.platform == 'all' || inputs.platform == 'linux-musl' }}" "${{ needs.linux-musl.result }}" linux-musl
+          mark "${{ inputs.platform == 'all' || inputs.platform == 'macos' }}"      "${{ needs.macos.result }}"      macos
+          if [ -n "$failed" ]; then
+            echo "::error::these platforms were selected but did not build green — their packages did not land:$failed"
+          fi
+          if [ -n "$upload_failed" ]; then
+            echo "::error::these platforms' upload_release.rb failed:$upload_failed"
+          fi
+          [ -z "$failed" ] && [ -z "$upload_failed" ]

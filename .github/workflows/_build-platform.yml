@@ -1,0 +1,309 @@
+# Copyright (c) 2026 [Ribose Inc](https://www.ribose.com).
+# All rights reserved.
+# This file is a part of tamatebako
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# The ONE per-platform build workflow (tebako-runtime-ruby's
+# _build-platform.yml role, at this factory's scope). Called by the four
+# thin platform triggers (build-<platform>.yml) and by the publish.yml
+# coordinator — never dispatched directly.
+#
+# Stage 1 (compute): the contract gate (schema + pins + the driver-source
+#   parity arm) runs, then scripts/compute_matrix.rb expands THIS
+#   platform's legs under the dispatch filters. Every downstream value
+#   flows from these outputs — workflow YAML never hardcodes a version, a
+#   tag, or a SHA (ecosystem SSOT invariant).
+# Stage 2 (build): one leg per (python x arch) of this platform:
+#   tools/build_runtime -> ci/check_symbol_provenance.sh ->
+#   tools/boot_smoke -> the runtime-packages-<os>-<arch>-<python>
+#   artifact. The build scripts fetch and sha256-verify every input
+#   themselves (the pinned source tarball, the pinned link unit, the tfs
+#   CLI) — there is NO source-build path for the driver stack here
+#   (contract.yml's link_unit_release comment), so the ruby factory's
+#   whole link-unit staging job has no counterpart.
+#
+# Container grammar (the ruby factory's): the linux legs run on the
+# ubuntu host and docker-run the tpkg-builder image per step — the musl
+# image is alpine-based and node actions cannot run on musl, so the
+# job-level container: form is out. macos legs are runner-native (brew
+# bundle), windows legs runner-native under msys2 ucrt64.
+#
+# The cache holds ONLY the sha256-verified downloads (.build/downloads)
+# and the staged link unit (.build/link-unit): a restored entry re-verifies
+# against the release-declared digests on use, so a poisoned or stale cache
+# cannot survive a pin bump (the key also carries contract.yml's hash).
+# save-always: a red boot smoke must never tax the next leg a cold
+# re-download (the ruby factory's msys campaign lesson). CACHE_VER stays
+# the manual escape hatch.
+name: _build-platform
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: 'This call''s platform: windows | linux-gnu | linux-musl | macos'
+        required: true
+        type: string
+      python_filter:
+        description: 'Pythons: "full", "tidy", "catalog", or comma-separated versions'
+        type: string
+        default: 'full'
+      arch_filter:
+        description: 'Arch slice: "all" or an arch (x86_64 | arm64)'
+        type: string
+        default: 'all'
+      audit:
+        description: 'Audit only: compute the legs, build nothing (publish.yml''s audit mode)'
+        type: boolean
+        default: false
+    outputs:
+      run:
+        description: '"true" when this platform has legs under the filters (set in audit mode too — the audit reads the expectations)'
+        value: ${{ jobs.compute.outputs.run }}
+      tebako_version:
+        description: 'The runtime package version (the VERSION file)'
+        value: ${{ jobs.compute.outputs.tebako_version }}
+      env_matrix:
+        description: 'The selected matrix.json rows (+ host_id) as JSON — the release job''s EXPECTED_ENV_MATRIX'
+        value: ${{ jobs.compute.outputs.env_matrix }}
+      python_matrix:
+        description: 'The selected python versions as JSON — the release job''s EXPECTED_PYTHON_MATRIX'
+        value: ${{ jobs.compute.outputs.python_matrix }}
+
+env:
+  CACHE_VER: 1
+
+jobs:
+  compute:
+    name: Compute the ${{ inputs.platform }} legs
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.emit.outputs.run }}
+      leg_count: ${{ steps.emit.outputs.leg_count }}
+      legs: ${{ steps.emit.outputs.legs }}
+      tebako_version: ${{ steps.emit.outputs.tebako_version }}
+      env_matrix: ${{ steps.emit.outputs.env_matrix }}
+      python_matrix: ${{ steps.emit.outputs.python_matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      # The contract gate first: contract.yml against its schema, the
+      # catalog resolvable, AND the driver-source parity arm (the pinned
+      # link-unit release's TEBAKO_CONTRACT_VERSION vs contract_version).
+      - name: validate the contract
+        run: bundle exec scripts/check_contract.rb
+
+      - id: emit
+        env:
+          PYTHON_FILTER: ${{ inputs.python_filter }}
+          PLATFORM_FILTER: ${{ inputs.platform }}
+          ARCH_FILTER: ${{ inputs.arch_filter }}
+        run: |
+          set -euo pipefail
+          legs=$(scripts/compute_matrix.rb)
+          count=$(jq '.include | length' <<< "$legs")
+          {
+            echo "legs=$legs"
+            echo "leg_count=$count"
+            if [ "$count" -gt 0 ]; then echo "run=true"; else echo "run=false"; fi
+            echo "tebako_version=$(cat VERSION)"
+            echo "env_matrix=$(scripts/compute_matrix.rb --format env)"
+            echo "python_matrix=$(scripts/compute_matrix.rb --format pythons)"
+          } >> "$GITHUB_OUTPUT"
+          # Mirror the plan to the LOG: values written only to
+          # $GITHUB_OUTPUT leave no diagnosable record when the legs skip.
+          echo "plan (${{ inputs.platform }}): $count legs (python=${PYTHON_FILTER} arch=${ARCH_FILTER})"
+          jq -r '.include[] | "  \(.python) \(.os)/\(.arch) on \(.host)"' <<< "$legs"
+
+  build:
+    name: ${{ matrix.python }} / ${{ matrix.os }}-${{ matrix.arch }}
+    needs: compute
+    # An unguarded empty matrix poisons the run conclusion; an audit run
+    # builds nothing (publish.yml's audit mode verifies the RELEASE).
+    if: ${{ always() && !cancelled() && needs.compute.outputs.run == 'true' && !inputs.audit }}
+    runs-on: ${{ matrix.host }}
+    # A hung leg fails loudly at the cap, never silently (the ruby
+    # factory's 150-minute record is the reference).
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.compute.outputs.legs) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Create folder for runtime packages
+        run: mkdir -p runtime-packages
+
+      - name: Cache the verified downloads + the staged link unit
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .build/downloads
+            .build/link-unit
+          key: tebako-python-dl-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('contract.yml') }}-v${{ env.CACHE_VER }}
+          save-always: true
+
+      # --- provisioning (host-native legs only; the container legs'
+      # toolchain is baked into the tpkg-builder image) -----------------
+      - name: Setup Ruby (the build tooling's interpreter)
+        if: matrix.os == 'macos'
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: false
+
+      # The Brewfile is the pin: --no-upgrade stops brew from upgrading
+      # already-installed formulas mid-matrix (the ruby factory's rule).
+      - name: Install brew packages
+        if: matrix.os == 'macos'
+        run: brew bundle --no-upgrade -f
+
+      - name: Setup MSys
+        if: matrix.os == 'windows'
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+        with:
+          msystem: ucrt64
+          path-type: minimal
+          update: true
+
+      # The ucrt64 CPython toolchain: the compiler/libc + the mingw-w64
+      # openssl/zlib dev packages (the msys-runtime openssl/zlib would
+      # mismatch the ucrt64 target), plus make and the msys ruby the
+      # build tooling runs on. The set settles with the first windows
+      # leg run (TODO.python/02's risk leg).
+      - name: Install pacman packages
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        run: |
+          pacman -S --needed --noconfirm make ruby \
+            mingw-w64-ucrt-x86_64-toolchain \
+            mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-zlib
+
+      # --- build -------------------------------------------------------
+      - name: Build the runtime (container legs)
+        if: matrix.container != null
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
+            "${{ matrix.container }}" bash -c '
+              set -e
+              tools/build_runtime --python "${{ matrix.python }}"
+              # Root in the container writes root-owned files onto the
+              # bind mount; hand them back to the runner user so the host
+              # steps (cache save, artifact upload) can read/write them.
+              uid=$(stat -c %u /mnt/w/contract.yml); gid=$(stat -c %g /mnt/w/contract.yml)
+              chown -R "$uid:$gid" /mnt/w/.build /mnt/w/runtime-packages 2>/dev/null || true'
+
+      - name: Build the runtime (macos)
+        if: matrix.os == 'macos'
+        run: tools/build_runtime --python "${{ matrix.python }}"
+
+      - name: Build the runtime (windows)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        run: |
+          git config --global core.longpaths true
+          tools/build_runtime --python "${{ matrix.python }}"
+
+      # --- the gates (a red gate skips the upload, and the release
+      # job's completeness check then fails the run loudly) -------------
+      - name: Check symbol provenance (container legs)
+        if: matrix.container != null
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
+            "${{ matrix.container }}" bash -c '
+              set -e
+              ci/check_symbol_provenance.sh --exe \
+                "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"'
+
+      - name: Check symbol provenance (macos)
+        if: matrix.os == 'macos'
+        run: |
+          ci/check_symbol_provenance.sh --exe \
+            "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
+
+      - name: Check symbol provenance (windows)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          exe="runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
+          [ -s "$exe" ] || exe="$exe.exe"
+          ci/check_symbol_provenance.sh --exe "$exe"
+
+      # The boot smoke self-selects the scenario set per platform (the
+      # POSIX set vs the windows bare + named-error trio) and resolves the
+      # exe from TEBAKO_RUNTIME_ROOT. TEBAKO_TFS names the tfs CLI the
+      # build fetched (the fixture-image scenarios pack with it) — inside
+      # the container legs it is the musl/gnu binary matching the image.
+      - name: Boot smoke (container legs)
+        if: matrix.container != null
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
+            "${{ matrix.container }}" bash -c '
+              set -e
+              export TEBAKO_RUNTIME_ROOT=runtime-packages
+              TEBAKO_TFS=$(echo .build/downloads/tfs/*/tfs-*)
+              export TEBAKO_TFS
+              tools/boot_smoke'
+
+      - name: Boot smoke (macos)
+        if: matrix.os == 'macos'
+        env:
+          TEBAKO_RUNTIME_ROOT: runtime-packages
+        run: |
+          set -euo pipefail
+          TEBAKO_TFS=$(echo .build/downloads/tfs/*/tfs-*)
+          export TEBAKO_TFS
+          tools/boot_smoke
+
+      - name: Boot smoke (windows)
+        if: matrix.os == 'windows'
+        shell: msys2 {0}
+        env:
+          TEBAKO_RUNTIME_ROOT: runtime-packages
+        run: |
+          set -euo pipefail
+          TEBAKO_TFS=$(echo .build/downloads/tfs/*/tfs-*)
+          export TEBAKO_TFS
+          tools/boot_smoke
+
+      # The artifact contract the release job consumes: one artifact per
+      # (platform, arch, python) workspace (tebako-runtime-ruby's
+      # runtime-packages-* pattern; the python component is this
+      # factory's — several pythons share an os/arch slice here).
+      - name: Upload the runtime packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.python }}
+          path: runtime-packages
+          # Consumed by the same coordinator run's release job, never
+          # after (the ruby factory's retention rule).
+          retention-days: 1
