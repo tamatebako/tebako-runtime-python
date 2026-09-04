@@ -149,6 +149,12 @@ jobs:
     # A hung leg fails loudly at the cap, never silently (the ruby
     # factory's 150-minute record is the reference).
     timeout-minutes: 150
+    # build_runtime's release-digest fetches ride the GitHub API;
+    # unauthenticated calls share the runner NAT's 60/h budget and die on
+    # 403 flakes (the 02 round-4 macos leg). secrets.GITHUB_TOKEN raises
+    # the budget to 5000/h; the container leg forwards it via -e below.
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.compute.outputs.legs) }}
@@ -209,7 +215,7 @@ jobs:
         if: matrix.container != null
         run: |
           set -euo pipefail
-          docker run --rm -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
+          docker run --rm -e GITHUB_TOKEN -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
             "${{ matrix.container }}" bash -c '
               set -e
               tools/build_runtime --python "${{ matrix.python }}"
@@ -229,21 +235,6 @@ jobs:
         run: |
           git config --global core.longpaths true
           tools/build_runtime --python "${{ matrix.python }}"
-
-      # TEMP diagnostic (the 02 round-3 probe): the windows legs die at
-      # make's parse — "Makefile:1025: target pattern contains no '%'".
-      # Dump the region plus every drive-letter-carrying line; REMOVE once
-      # the parse failure is diagnosed and fixed.
-      - name: Diagnose the windows Makefile parse failure
-        if: failure() && matrix.os == 'windows'
-        shell: msys2 {0}
-        run: |
-          mf=$(echo .build/src/tfs-python-*-src/Makefile)
-          [ -f "$mf" ] || { echo "no generated Makefile"; exit 0; }
-          echo "== lines 1000-1050 of $mf"
-          sed -n '1000,1050p' "$mf"
-          echo "== lines carrying a drive-letter path"
-          grep -nE '[A-Za-z]:/' "$mf" | head -30 || true
 
       # --- the gates (a red gate skips the upload, and the release
       # job's completeness check then fails the run loudly) -------------
