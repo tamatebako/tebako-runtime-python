@@ -200,7 +200,7 @@ jobs:
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
-          pacman -S --needed --noconfirm make ruby \
+          pacman -S --needed --noconfirm git make ruby \
             mingw-w64-ucrt-x86_64-toolchain \
             mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-zlib
 
