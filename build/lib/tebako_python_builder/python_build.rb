@@ -272,7 +272,16 @@ module TebakoPythonBuilder
         # the fs TU rides under the shipped name python.o (the object
         # consumers of LIBPL expect; its content is the driver-linked TU).
         [%r{^(\s*\$\(INSTALL_DATA\) )Programs/python\.o( \$\(DESTDIR\)\$\(LIBPL\)/python\.o;.*)$},
-         "\\1Programs/tebako_python.o\\2"]
+         "\\1Programs/tebako_python.o\\2"],
+        # wasm prelude (CPython 3.12/3.13 — 3.14 dropped the wasm rules,
+        # so the gsub is a no-op there): WASM_ASSETS_DIR=.$(prefix) spells
+        # ".A:/t" on windows, GNU make expands rule prereqs at parse time,
+        # and the drive-letter colon then reads `wasm_stdlib: $(WASM_STDLIB)`
+        # as a static-pattern rule whose pattern carries no %
+        # ("target pattern contains no '%'" — Makefile:1025 on 3.12.14,
+        # 1144 on 3.13.15). Off-emscripten the wasm rules are dead weight;
+        # "." keeps every expansion colon-free.
+        [%r{^WASM_ASSETS_DIR=\.\$\(prefix\)$}, "WASM_ASSETS_DIR=."]
       ] + rewrites.map { |key, value| [/^#{key}=.*$/, "#{key}=#{value}"] }
 
       targets.each do |path|
@@ -293,6 +302,11 @@ module TebakoPythonBuilder
       missing = []
       missing << "the $(BUILDPYTHON) rule" unless content.include?("$(BUILDPYTHON):\tPrograms/tebako_python.o")
       missing << "the libainstall python.o line" unless content.include?("$(INSTALL_DATA) Programs/tebako_python.o")
+      # The wasm anchor is version-conditional (absent on 3.14+), so the
+      # drift guard is inverted: a SURVIVING un-rewritten binding means the
+      # anchor drifted (reindented, respelled) under a version that still
+      # carries the rules — a named error here, not a parse mystery in CI.
+      missing << "the WASM_ASSETS_DIR prefix binding" if content.match?(/^WASM_ASSETS_DIR=\.\$\(prefix\)$/)
       mlibs.modlib_rewrites.each_key do |key|
         missing << key unless content =~ /^#{key}=\S/
       end
