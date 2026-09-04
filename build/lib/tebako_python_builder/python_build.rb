@@ -96,11 +96,14 @@ module TebakoPythonBuilder
     end
 
     # The built interpreter exe in the build tree (the driver-linked one).
-    # CPython spells BUILDPYTHON "python.exe" on EVERY platform — the bare
-    # "python" name is unspellable on a case-insensitive filesystem, where
-    # the source tree's Python/ directory owns it.
+    # CPython spells BUILDPYTHON "python$(BUILDEXE)", and BUILDEXE is
+    # ".exe" only where configure's CaseSensitiveTestDir probe finds the
+    # BUILD DIRECTORY case-insensitive (macOS/Windows checkouts — or a
+    # POSIX build on a case-insensitive mount). CI's Linux overlayfs is
+    # case-sensitive: the exe is plain "python" there. The generated
+    # Makefile is the authority on the spelling.
     def exe_path
-      File.join(src_dir, "python.exe")
+      File.join(src_dir, "python#{build_exe_ext}")
     end
 
     # The runtime's abi facet (the release shard's additive `abi` key):
@@ -124,6 +127,18 @@ module TebakoPythonBuilder
     end
 
     private
+
+    # The generated Makefile's BUILDEXE — the one authority on how
+    # BUILDPYTHON spells the exe on THIS build dir (the exe_path comment).
+    def build_exe_ext
+      makefile = File.join(src_dir, "Makefile")
+      match = File.read(makefile).match(/^BUILDEXE=\s*(\S*)\s*$/)
+      return match[1] if match
+
+      raise TebakoPythonBuilder::Error.new(
+        "no BUILDEXE in #{makefile} — configure's output is missing (the build did not run?)", 104
+      )
+    end
 
     def mlibs
       @mlibs ||= TebakoPythonBuilder::Mlibs.new(platform: @platform, link_unit: @link_unit,
@@ -189,20 +204,34 @@ module TebakoPythonBuilder
       raise TebakoPythonBuilder::Error.new("'build_runtime' configure step failed: #{e.message}", 103)
     end
 
-    # macOS only: brew's openssl@3 and zlib are keg-only (pkg-config never
+    # macOS: brew's openssl@3 and zlib are keg-only (pkg-config never
     # sees them), so the detection inputs are named explicitly — ZLIB_*
     # are honored env overrides (configure.ac), openssl rides
-    # --with-openssl. Everywhere else the system openssl/zlib are found by
-    # the default detection (the containers ship libssl-dev/zlib1g-dev,
+    # --with-openssl.
+    # linux-gnu: the tpkg-builder images export CFLAGS=-pthread, so
+    # configure's run-probe reports pthreads "available without options"
+    # and no link-side thread flag ever lands in LIBS/LDFLAGS — while the
+    # Makefile's link rules use only $(PY_CORE_LDFLAGS) $(LIBS) $(MODLIBS)
+    # $(SYSLIBS), and glibc < 2.34 keeps pthread_create/sem_init in
+    # libpthread (the _freeze_module link dies there, undefined refs).
+    # LDFLAGS=-pthread flows through PY_LDFLAGS into PY_CORE_LDFLAGS, the
+    # link side of every rule; the compile side already carries the
+    # image's -pthread.
+    # Everywhere else the system openssl/zlib are found by the default
+    # detection (the containers ship libssl-dev/zlib1g-dev,
     # openssl-dev/zlib-static, pacman openssl).
     def configure_env
-      return {} unless @platform.macos?
-
-      zlib = @platform.brew_prefix("zlib")
-      {
-        "ZLIB_CFLAGS" => "-I#{File.join(zlib, "include")}",
-        "ZLIB_LIBS" => mlibs.static_lib("z")
-      }
+      if @platform.macos?
+        zlib = @platform.brew_prefix("zlib")
+        {
+          "ZLIB_CFLAGS" => "-I#{File.join(zlib, "include")}",
+          "ZLIB_LIBS" => mlibs.static_lib("z")
+        }
+      elsif @platform.linux_gnu?
+        { "LDFLAGS" => "-pthread" }
+      else
+        {}
+      end
     end
 
     def openssl_prefix
