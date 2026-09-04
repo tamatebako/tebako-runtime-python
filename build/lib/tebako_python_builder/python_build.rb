@@ -117,12 +117,19 @@ module TebakoPythonBuilder
         out, st = Open3.capture2e(env, exe_path, "-E", "-c",
                                   "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX') or '')",
                                   chdir: src_dir)
-        unless st.exitstatus&.zero? && !out.strip.empty?
+        # The linux containers run LANG=C: capture2e tags the bytes
+        # US-ASCII and a UTF-8 punctuation byte from the driver's own
+        # stderr diagnostics makes strip raise there (macOS tags UTF-8,
+        # which is why only the linux legs saw it). Re-tag, scrub, and
+        # keep the EXT_SUFFIX-shaped line — stderr noise never parses.
+        text = out.force_encoding(Encoding::UTF_8).scrub
+        line = text.lines.map(&:strip).find { |l| l.match?(/\A\.?cpython-\d+[\w.-]*\z/) }
+        unless st.exitstatus&.zero? && line
           raise TebakoPythonBuilder::Error.new(
-            "the built interpreter did not report its EXT_SUFFIX (#{st}): #{out}", 106
+            "the built interpreter did not report its EXT_SUFFIX (#{st}): #{text}", 106
           )
         end
-        out.strip.sub(/\A\./, "")
+        line.sub(/\A\./, "")
       end
     end
 
