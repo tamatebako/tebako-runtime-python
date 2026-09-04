@@ -230,6 +230,21 @@ jobs:
           git config --global core.longpaths true
           tools/build_runtime --python "${{ matrix.python }}"
 
+      # TEMP diagnostic (the 02 round-3 probe): the windows legs die at
+      # make's parse — "Makefile:1025: target pattern contains no '%'".
+      # Dump the region plus every drive-letter-carrying line; REMOVE once
+      # the parse failure is diagnosed and fixed.
+      - name: Diagnose the windows Makefile parse failure
+        if: failure() && matrix.os == 'windows'
+        shell: msys2 {0}
+        run: |
+          mf=$(echo .build/src/tfs-python-*-src/Makefile)
+          [ -f "$mf" ] || { echo "no generated Makefile"; exit 0; }
+          echo "== lines 1000-1050 of $mf"
+          sed -n '1000,1050p' "$mf"
+          echo "== lines carrying a drive-letter path"
+          grep -nE '[A-Za-z]:/' "$mf" | head -30 || true
+
       # --- the gates (a red gate skips the upload, and the release
       # job's completeness check then fails the run loudly) -------------
       - name: Check symbol provenance (container legs)
