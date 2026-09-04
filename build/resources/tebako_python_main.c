@@ -35,6 +35,14 @@
  * 69 (no preload tier there — roadmap 30 phase 2).
  */
 
+/* glibc AND musl under -std=c11 (strict ANSI — CPython's default cflags,
+ * and this TU includes no pyconfig.h) hide readlink/setenv behind
+ * feature-test macros; _GNU_SOURCE exposes them. Must precede every
+ * system include. macOS declares both regardless. */
+#if defined(__linux__)
+#define _GNU_SOURCE
+#endif
+
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
