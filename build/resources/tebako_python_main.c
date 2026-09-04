@@ -55,6 +55,12 @@
 #include <mach-o/dyld.h>
 #endif
 
+/* ucrt has no POSIX setenv; _putenv_s overwrites unconditionally, which
+ * is exactly what every call site below asks (overwrite=1). */
+#ifdef _WIN32
+#define setenv(name, value, overwrite) ((void)(overwrite), _putenv_s(name, value))
+#endif
+
 /* The spec-17 driver ABI (tamatebako/tebako crates/tebako-driver ffi.rs). */
 extern int tebako_driver_boot(int *argc, char ***argv, const char *runtime_root);
 extern const char *tebako_mount_point(void);
