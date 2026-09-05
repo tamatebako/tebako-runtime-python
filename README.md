@@ -231,21 +231,21 @@ never appear in workflow YAML.
   driver-source parity arm of `scripts/check_contract.rb`).
 - `container_version: "v1"` — the tpkg-builder tag line. Per-leg digest
   pinning is a follow-up.
-- `link_unit_release: "v2.1.5"` — the tamatebako/tebako release whose
-  prebuilt link unit the legs consume. **Predates the `fcntl`
-  interposition fix** (tamatebako/tebako#524): move this pin to the
-  first tebako release that carries it, then the POSIX boot-smoke legs
-  go green in CI.
-- `source_release: "v0.1.0"` — the tamatebako/python source release pin
-  (the source factory's first tag; landed).
+- `link_unit_release: "v2.3.2"` — the tamatebako/tebako release whose
+  prebuilt link unit the legs consume (the v2.3 arc: spec-30 dispatch,
+  shim routing, the spec-29 wrapper driver, the dup-class interpose +
+  the aarch64 dup2 repair; NEVER pin v2.3.1 — it published without the
+  linux-arm64 units).
+- `source_release: "v0.2.0"` — the tamatebako/python source release pin
+  (v0.1.0's set plus 3.11.16).
 - `python:` — the version catalog (`catalog` / `full` / `tidy` sets),
   mirroring tamatebako/python's `versions.yml`.
 
 ## Layout
 
 - `VERSION` — the package version: package names and the release tag
-  follow it (`v$(cat VERSION)`). `0.0.0` is the never-published
-  placeholder; the first publish PR opens the real line.
+  follow it (`v$(cat VERSION)`). `0.0.0` was the never-published
+  placeholder; the real line opened at 0.1.0 (owner GO 2026-09-05).
 - `contract.yml` + `schema/` — the pins and the version catalog, and
   their JSON Schema; `scripts/check_contract.rb` validates (CI),
   including the driver-source parity arm (contract.yml ↔ the tebako

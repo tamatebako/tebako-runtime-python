@@ -26,17 +26,20 @@ packaging → sidecars, gated by `ci/check_symbol_provenance.sh` and
 `publish.yml` drives `scripts/upload_release.rb` per platform. The
 macos-arm64 leg is dogfooded locally green (7/7 boot-smoke scenarios).
 
-Nothing has published: releases stay draft-gated until the TODO.python
-chain is proven (the xml2rfc payload, 03). The pinned
-`link_unit_release: "v2.1.10"` carries all three libtfs-preload boot
-fixes — the `fcntl` interpose (tamatebako/tebako#524, the CPython
-FileIO boot blocker), the BOOT_LIVE gate + raw early-boot passthrough
+The owner opened the publish gate 2026-09-05 (the TODO.python chain's
+xml2rfc proof proceeds against the published runtime): the first
+release line is v0.1.0. The pinned
+`link_unit_release: "v2.3.2"` carries the v2.3 arc — the spec-30
+spawn dispatch, shim routing, the spec-29 wrapper-exe driver, and
+the dup-class interpose with the aarch64 dup2 repair
+(tamatebako/tebako#534/#545) — on top of the three libtfs-preload boot
+fixes from the v2.1.8–v2.1.10 line: the `fcntl` interpose
+(tamatebako/tebako#524, the CPython FileIO boot blocker), the
+BOOT_LIVE gate + raw early-boot passthrough
 (tamatebako/tebako#527, the static-jemalloc boot deadlock that wedged
-the gnu legs), and the `fcntl64` export (tamatebako/tebako#529 —
-glibc's `_FILE_OFFSET_BITS=64` redirect made the gnu interpreter's
-PEP-446 cloexec probe bypass the shim and die EBADF at
-init_fs_encoding). The POSIX boot-smoke CI legs were red-by-design on
-the old v2.1.5 pin and are expected green on this one. The windows row
+the gnu legs), and the `fcntl64` export (tamatebako/tebako#529).
+The POSIX boot-smoke CI legs were red-by-design on the old v2.1.5
+pin and are green on the v2.1.10+ line. The windows row
 is descoped out of the 02 matrix (TODO.python/05 — CPython upstream
 has zero mingw support; the port is a tamatebako/python msys2/ucrt64
 patch
