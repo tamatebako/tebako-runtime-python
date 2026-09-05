@@ -64,26 +64,28 @@ container_version: "v1"
 # the driver stack; a supply-chain event is reported, not worked
 # around).
 #
-# v2.1.10 is the current product line (the libtfs-preload fcntl64
-# export, tebako#529 — glibc's _FILE_OFFSET_BITS=64 header redirect
-# made the gnu CPython PEP-446 cloexec probe bypass the shim and die
-# EBADF at init_fs_encoding; follows v2.1.9's BOOT_LIVE gate,
-# tebako#527, and v2.1.8's fcntl interpose, tebako#524; contract
-# unchanged at 2). Verified 2026-09-05 (the fully published
-# release): v2.1.10 ships a unit for all seven legs — linux-gnu-{x86_64,arm64},
+# v2.3.2 is the current product line: the v2.3 arc (spec-30 spawn
+# dispatch, shim routing + version management, the spec-29 wrapper-exe
+# driver, the libtfs-preload dup-class interpose with the aarch64
+# dup2 repair — tebako#534/#545) on top of v2.1.10's three boot fixes
+# (tebako#524/#527/#529; contract unchanged at 2). Verified
+# 2026-09-06 (the fully published release): v2.3.2 ships a unit for
+# all seven legs — linux-gnu-{x86_64,arm64},
 # linux-musl-{x86_64,arm64}, macos-{x86_64,arm64} and
-# x86_64-windows-gnu.
-link_unit_release: "v2.1.10"
+# x86_64-windows-gnu. NEVER pin v2.3.1: it published partial (no
+# linux-arm64 units) after the aarch64 SYS_dup2 compile break.
+link_unit_release: "v2.3.2"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src.tar.gz + SHA256SUMS, sha256-verified).
-# First published source release: v0.1.0 (2026-09-02 — 3.12.14,
-# 3.13.15, 3.14.7). A build leg fails closed while this is empty.
-source_release: "v0.1.0"
+# v0.2.0 (2026-09-05) adds 3.11.16; the v0.1.0 set (3.12.14, 3.13.15,
+# 3.14.7) carried forward sha256-verified. A build leg fails closed
+# while this is empty.
+source_release: "v0.2.0"
 
-# The python version catalog this factory builds and publishes. This
-# placeholder mirrors tamatebako/python's versions.yml at scaffold time
-# (2026-09-02: 3.12.14, 3.13.15, 3.14.7). The source factory owns the
+# The python version catalog this factory builds and publishes. Mirrors
+# tamatebako/python's versions.yml at source release v0.2.0 (3.11.16,
+# 3.12.14, 3.13.15, 3.14.7). The source factory owns the
 # version PINS (url/sha256/line); this catalog selects which published
 # versions the matrix grammar expands over — the same split as
 # tamatebako/ruby's versions.yml vs tebako-runtime-ruby's
@@ -94,6 +96,6 @@ source_release: "v0.1.0"
 #   full    — the tip of every supported line
 #   tidy    — the primary dogfood set (the xml2rfc driving line)
 python:
-  catalog: ["3.12.14", "3.13.15", "3.14.7"]
-  full: ["3.12.14", "3.13.15", "3.14.7"]
+  catalog: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
+  full: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
   tidy: ["3.13.15"]
