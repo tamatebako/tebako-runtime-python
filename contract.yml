@@ -64,14 +64,15 @@ container_version: "v1"
 # the driver stack; a supply-chain event is reported, not worked
 # around).
 #
-# v2.1.8 is the current product line (the libtfs-preload fcntl
-# interpose, tebako#524 — the CPython FileIO boot blocker that kept the
-# POSIX boot-smoke legs red-by-design; contract unchanged at 2).
-# Verified 2026-09-04 (the fully published release): v2.1.8 ships a unit
-# for all seven legs — linux-gnu-{x86_64,arm64},
+# v2.1.9 is the current product line (the libtfs-preload BOOT_LIVE
+# gate + raw early-boot passthrough, tebako#527 — the static-jemalloc
+# boot deadlock that wedged the gnu boot-smoke legs; follows v2.1.8's
+# fcntl interpose, tebako#524 — the CPython FileIO boot blocker;
+# contract unchanged at 2). Verified 2026-09-05 (the fully published
+# release): v2.1.9 ships a unit for all seven legs — linux-gnu-{x86_64,arm64},
 # linux-musl-{x86_64,arm64}, macos-{x86_64,arm64} and
 # x86_64-windows-gnu.
-link_unit_release: "v2.1.8"
+link_unit_release: "v2.1.9"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src.tar.gz + SHA256SUMS, sha256-verified).
