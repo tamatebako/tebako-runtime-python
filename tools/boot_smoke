@@ -52,7 +52,8 @@
 #   override-ungranted   TEBAKO_MOUNT_ROOT against an env image whose
 #                        layout lacks the grant -> exit 78
 #
-# POSIX legs run the full set; the windows leg runs bare + the named-
+# POSIX legs run the full set. A windows leg (TODO.python/05 — descoped
+# from the 02 matrix until the mingw port lands) runs bare + the named-
 # error trio (bad-mount, mount-root-malformed, override-ungranted) — the
 # in-image imports are roadmap 30 phase 2 there (README's windows
 # boundary).
@@ -68,7 +69,6 @@
 require "fileutils"
 require "open3"
 require "optparse"
-require "timeout"
 require "tmpdir"
 
 REPO_ROOT = File.expand_path("..", __dir__).freeze
@@ -147,12 +147,31 @@ def boot(executable, argv, env_extra)
     env = ENV_SCRUBBED.to_h { |key| [key, nil] }
     ENV.each_key { |key| env[key] = nil if key.start_with?("TEBAKO_") }
     env.merge!(env_extra)
-    Timeout.timeout(BOOT_TIMEOUT) do
-      Open3.capture3(env, executable, *argv, chdir: cwd)
+    # popen3 + a wait-deadline poll, NOT Timeout.timeout around capture3:
+    # the Timeout unwind lands in popen3's ensure (wait_thr.join on the
+    # still-immortal child) and blocks forever there, so the timeout
+    # could never fire on a wedged runtime (the tebako#527 gnu shape:
+    # zero output, never exits). Past the deadline the child is
+    # hard-killed and reaped BEFORE any unwind touches popen3's ensure.
+    out = err = status = nil
+    Open3.popen3(env, executable, *argv, chdir: cwd) do |stdin, stdout, stderr, wait_thr|
+      stdin.close
+      readers = [stdout, stderr].map { |io| Thread.new { io.read } }
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + BOOT_TIMEOUT
+      loop do
+        break if wait_thr.join(0.1)
+        next unless Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+        Process.kill("KILL", wait_thr.pid)
+        wait_thr.join
+        readers.each(&:kill)
+        return ["", "boot_smoke: runtime did not exit within #{BOOT_TIMEOUT}s (hard-killed)", nil]
+      end
+      out, err = readers.map(&:value)
+      status = wait_thr.value
     end
+    [out, err, status]
   end
-rescue Timeout::Error
-  ["", "boot_smoke: runtime did not exit within #{BOOT_TIMEOUT}s", nil]
 end
 
 $failures = 0
