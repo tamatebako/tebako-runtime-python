@@ -51,6 +51,15 @@
 #   - No repository_dispatch trigger yet: the python source factory does
 #     not dispatch "tebako release" here (the ruby chain's pin-moved
 #     rebuilds). The trigger arrives when tamatebako/python wires it.
+#   - The release job authenticates with the runner GITHUB_TOKEN, not the
+#     ruby grammar's `TEBAKO_CI_PAT_TOKEN || GITHUB_TOKEN` preference:
+#     the org PAT's fine-grained repository selection predates this repo
+#     and 404s every API call from here (the first publish died at
+#     create_release, run 33999688520). The runner token's contents:write
+#     suffices — no downstream cascade listens to this factory's releases
+#     yet. The PAT preference returns WITH the cascade wiring, and the
+#     PAT's repo selection must cover this repo by then
+#     (tebako-runtime-python#5 — owner action).
 name: publish
 
 on:
@@ -142,7 +151,9 @@ jobs:
     # every selected platform's expectations).
     if: ${{ always() && !cancelled() && (inputs.publish || inputs.audit) && (needs.windows.result == 'success' || needs.linux-gnu.result == 'success' || needs.linux-musl.result == 'success' || needs.macos.result == 'success') }}
     env:
-      GITHUB_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+      # Runner GITHUB_TOKEN, not the org PAT preference — see the header's
+      # deviation note and tebako-runtime-python#5.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
