@@ -376,8 +376,8 @@ module TebakoPythonBuilder
     # floors the host python at 3.11 (the gnu tpkg-builder image is
     # focal-based — its python3, when present at all, is 3.8). The probe
     # mirrors configure's own PYTHON_FOR_REGEN search (newest versioned
-    # name first, bare python3 last — a deadsnakes python3.11 NEVER
-    # replaces the system python3).
+    # name first, bare python3 last — a provisioned standalone python3.13
+    # NEVER replaces the system python3).
     def gate_jit_host_python
       found = nil
       probed = %w[python3.14 python3.13 python3.12 python3.11 python3]

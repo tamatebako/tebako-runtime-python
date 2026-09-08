@@ -37,10 +37,17 @@
 #
 # Platform dispatch rides the container's baked TPKB_FAMILY:
 #   linux-gnu   ubuntu focal: apt.llvm.org's llvm-toolchain-<codename>-N
-#               ships clang-N / llvm-readobj-N; the host python comes from
-#               deadsnakes (python3.11 — the system python3 is NEVER
-#               replaced; configure's PYTHON_FOR_REGEN search finds the
-#               versioned name first).
+#               ships clang-N / llvm-readobj-N; the host python >= 3.11
+#               comes from a PINNED, sha256-verified
+#               python-build-standalone tarball (astral-sh) — focal's own
+#               python3 is 3.8 and deadsnakes' focal dist was EMPTIED
+#               (focal left standard support 2025-04; its Packages index
+#               is a 20-byte empty gzip as of 2026-09 — the InRelease
+#               still fetches, so a deadsnakes deb line fails SILENTLY at
+#               install time). The standalone python lands as
+#               /usr/local/bin/python3.13 — the system python3 is NEVER
+#               replaced, and configure's PYTHON_FOR_REGEN search finds
+#               the versioned name first.
 #   linux-musl  alpine 3.21: apk llvmN (+ clangN — 19's clang is already
 #               baked into the tpkg-builder image). The tools live in
 #               /usr/lib/llvmN/bin, off PATH; the build gate PATH-augments
@@ -94,13 +101,29 @@ case "${TPKB_FAMILY:-}" in
     apt-get install -y --no-install-recommends "clang-${MAJOR}" "llvm-${MAJOR}"
 
     if ! have_host_python; then
-      # deadsnakes (focal's own python3 is 3.8 — under the JIT floor).
-      curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF23C5A6CF475977595C89F51BA6932366A755776" |
-        gpg --yes --dearmor -o /usr/share/keyrings/deadsnakes.gpg
-      echo "deb [signed-by=/usr/share/keyrings/deadsnakes.gpg] http://ppa.launchpad.net/deadsnakes/ppa/ubuntu ${codename} main" \
-        > /etc/apt/sources.list.d/deadsnakes.list
-      apt-get update
-      apt-get install -y --no-install-recommends python3.11
+      # The pinned python-build-standalone host python (see the header):
+      # 3.13 satisfies configure's PYTHON_FOR_REGEN search for both jit
+      # lines (3.13 and 3.14), and python3.13 lands on PATH ahead of the
+      # system python3 without replacing it.
+      pbs_tag="20260901"
+      pbs_name="cpython-3.13.15+${pbs_tag}-$(uname -m)-unknown-linux-gnu-install_only"
+      case "$(uname -m)" in
+        x86_64)  pbs_sha="0651dd7157d3debf769e15a52c1de9de7fbcdc36ba72faf79fde3c44f14d9461" ;;
+        aarch64) pbs_sha="76ed18125286d7dc96ce24023d1e319dbd55a89a767102411b1ea23846113f69" ;;
+        *)
+          echo "provision_jit_toolchain: no pinned host python for arch $(uname -m)" >&2
+          exit 2
+          ;;
+      esac
+      curl -fsSL "https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/${pbs_name}.tar.gz" \
+        -o /tmp/host-python.tar.gz
+      echo "${pbs_sha}  /tmp/host-python.tar.gz" | sha256sum -c -
+      tar -xzf /tmp/host-python.tar.gz -C /opt
+      ln -sf /opt/python/bin/python3.13 /usr/local/bin/python3.13
+      have_host_python || {
+        echo "provision_jit_toolchain: standalone python installed but no python >= 3.11 resolves" >&2
+        exit 2
+      }
     fi
     ;;
   linux-musl)
@@ -130,5 +153,11 @@ for tool in "clang-${MAJOR}" "llvm-readobj-${MAJOR}"; do
 done
 for dir in "/usr/lib/llvm-${MAJOR}/bin" "/usr/lib/llvm${MAJOR}/bin"; do
   [ -x "${dir}/clang" ] && note "${dir}/clang + llvm-readobj (off-PATH; the build gate augments PATH)"
+done
+for py in python3.14 python3.13 python3.12 python3.11 python3; do
+  if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    note "host python: $py ($("$py" --version 2>&1))"
+    break
+  fi
 done
 note "LLVM ${MAJOR} toolchain provisioned (${TPKB_FAMILY})"
