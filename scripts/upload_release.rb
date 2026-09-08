@@ -457,6 +457,12 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
       # predate the key ignore it (the compat window).
       sidecar = Pathname.new("#{package.sub(/\.exe\z/, "")}.abi")
       entry[:abi] = sidecar.read.strip if sidecar.file?
+      # The additive capabilities line (versions catalog plan 04): display
+      # metadata owned by the factory that compiled the runtime -- never a
+      # selector axis. jit = the release line's CPython copy-and-patch JIT
+      # flavor (PythonVersion, PEP 744); unflavored lines emit [].
+      version = TebakoPythonBuilder::PythonVersion.new(python_version)
+      entry[:capabilities] = version.jit? ? [TebakoPythonBuilder::PythonVersion::FLAVOR_JIT] : []
       entry[:image] = image_entry(image) if image
       entry[:dll] = dll_entry(dll, python_version) if dll
     end
