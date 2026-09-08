@@ -36,8 +36,11 @@
 # this script can never provision the wrong toolchain silently.
 #
 # Platform dispatch rides the container's baked TPKB_FAMILY:
-#   linux-gnu   ubuntu focal: apt.llvm.org's llvm-toolchain-<codename>-N
-#               ships clang-N / llvm-readobj-N; the host python >= 3.11
+#   linux-gnu   ubuntu focal: clang-N / llvm-N (the latter ships
+#               llvm-readobj-N) come from the sources already in the
+#               image — focal-updates' backports (18) and the baked
+#               apt.llvm.org focal-19 list (19); apt.llvm.org is added
+#               explicitly only as a fallback. The host python >= 3.11
 #               comes from a PINNED, sha256-verified
 #               python-build-standalone tarball (astral-sh) — focal's own
 #               python3 is 3.8 and deadsnakes' focal dist was EMPTIED
@@ -82,27 +85,30 @@ have_host_python() {
 
 case "${TPKB_FAMILY:-}" in
   linux-gnu)
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    codename="${VERSION_CODENAME:-}"
-    [ -n "$codename" ] || {
-      echo "provision_jit_toolchain: /etc/os-release carries no VERSION_CODENAME" >&2
-      exit 2
-    }
-
-    list="/etc/apt/sources.list.d/llvm${MAJOR}.list"
-    if [ ! -f "$list" ]; then
-      # Retry connect flakes (a runner transient is a leg failure
-      # otherwise — observed: arm64 gnu leg, curl (7) into an empty gpg).
-      # NO --retry-all-errors: focal's curl 7.68 predates it (7.71).
+    # Install FIRST, add the apt.llvm.org repo ONLY when the existing
+    # sources can't satisfy the exact-major packages: focal-updates
+    # universe backports clang-18/llvm-18, and the tpkg-builder image
+    # bakes clang-19 plus an apt.llvm.org focal-19 list (key included).
+    # Reaching for apt.llvm.org unconditionally puts a third-party key
+    # fetch on the critical path — a runner-side connect flake there
+    # killed jit legs twice (curl (7) through --retry-connrefused).
+    apt-get -o Acquire::Retries=3 update
+    if ! apt-get -o Acquire::Retries=3 install -y --no-install-recommends "clang-${MAJOR}" "llvm-${MAJOR}"; then
+      # shellcheck disable=SC1091
+      . /etc/os-release
+      codename="${VERSION_CODENAME:-}"
+      [ -n "$codename" ] || {
+        echo "provision_jit_toolchain: /etc/os-release carries no VERSION_CODENAME" >&2
+        exit 2
+      }
       curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused \
         https://apt.llvm.org/llvm-snapshot.gpg.key |
         gpg --yes --dearmor -o /usr/share/keyrings/llvm.gpg
       echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${MAJOR} main" \
-        > "$list"
+        > "/etc/apt/sources.list.d/llvm${MAJOR}.list"
+      apt-get -o Acquire::Retries=3 update
+      apt-get -o Acquire::Retries=3 install -y --no-install-recommends "clang-${MAJOR}" "llvm-${MAJOR}"
     fi
-    apt-get -o Acquire::Retries=3 update
-    apt-get -o Acquire::Retries=3 install -y --no-install-recommends "clang-${MAJOR}" "llvm-${MAJOR}"
 
     if ! have_host_python; then
       # The pinned python-build-standalone host python (see the header):
