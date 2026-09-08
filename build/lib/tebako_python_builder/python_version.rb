@@ -30,18 +30,74 @@ module TebakoPythonBuilder
   # version predicates and the derived name grammar; the source tarball
   # carries its own integrity metadata via the release SHA256SUMS, so no
   # sha table lives here).
+  #
+  # The line grammar is x.y.z with an optional FLAVOR suffix
+  # (x.y.z-jit): a build ability rides the RELEASE LINE (the version
+  # string), never a new selector axis — spec 28 §8's truffleruby
+  # native/jvm precedent. "jit" is CPython 3.13+'s experimental
+  # copy-and-patch JIT (--enable-experimental-jit, PEP 744): the same
+  # pristine source, a different configure-time ability. The line flows
+  # verbatim into the package/image names
+  # (tebako-runtime-<tebako>-3.13.15-jit-<triplet>), the release index's
+  # python_version identity, and the L1 manifest's provides.version;
+  # provides.language_version stays the BASE version (a jit build speaks
+  # exactly CPython 3.13.15 — constraints match the language level).
   class PythonVersion
+    # The one owner of the line grammar (spec 00 §10): the schema's
+    # catalog pattern mirrors it (asserted by the lint gate passing on
+    # the same strings), scripts/upload_release.rb's package-filename
+    # parse interpolates LINE_GRAMMAR_SOURCE — nothing re-derives it.
+    LINE_GRAMMAR_SOURCE = '\d+\.\d+\.\d+(?:-jit)?'
+    LINE_PATTERN = /\A(?<base>\d+\.\d+\.\d+)(?:-(?<flavor>jit))?\z/.freeze
+
+    FLAVOR_JIT = "jit"
+
+    # The JIT exists upstream in CPython 3.13+ (PEP 744); a jit line
+    # below the floor is a declaration bug — named error at parse, never
+    # a configure surprise mid-leg.
+    JIT_FLOOR = [3, 13].freeze
+
+    # The LLVM major each line's JIT build requires (clang + llvm-readobj
+    # at exactly this major — CPython's Tools/jit/_llvm.py matches
+    # `version N.` exactly). The OWNER is the extracted CPython source
+    # (Tools/jit/_llvm.py's _LLVM_VERSION); this table exists so the leg
+    # planner (scripts/compute_matrix.rb) can provision the toolchain
+    # BEFORE any source is fetched. PythonBuild asserts the two agree on
+    # every jit build (the parity arm) — a drifted table is a named build
+    # error, never a silently wrong toolchain.
+    JIT_LLVM_MAJORS = { [3, 13].freeze => 18, [3, 14].freeze => 19 }.freeze
+
     def initialize(python_version)
       @python_version = python_version
-      version_check_format
+      parse_line
     end
 
-    attr_reader :python_version
+    attr_reader :python_version, :base_version, :flavor
 
-    # The version's major.minor line as integers (3.13 for every 3.13.x),
-    # so 4.x lines fall out naturally.
+    def jit?
+      @flavor == FLAVOR_JIT
+    end
+
+    # The LLVM major this jit line's build requires; nil for unflavored
+    # lines; a named error for a jit line whose toolchain this factory
+    # does not know yet (a new CPython line earns its table entry in the
+    # PR that opens it).
+    def jit_llvm_major
+      return nil unless jit?
+
+      JIT_LLVM_MAJORS.fetch(major_minor) do
+        raise TebakoPythonBuilder::Error.new(
+          "no known JIT toolchain for the #{major_minor.join(".")} line — " \
+          "JIT_LLVM_MAJORS (mirroring the source's Tools/jit/_llvm.py) carries #{JIT_LLVM_MAJORS.keys.map { |k| k.join(".") }.join(", ")}",
+          109
+        )
+      end
+    end
+
+    # The version's major.minor line as integers (3.13 for every 3.13.x,
+    # flavored or not), so 4.x lines fall out naturally.
     def major_minor
-      @major_minor ||= @python_version.split(".").first(2).map(&:to_i)
+      @major_minor ||= base_version.split(".").first(2).map(&:to_i)
     end
 
     # The abi_line the image manifest's provides block declares (spec 03
@@ -75,11 +131,25 @@ module TebakoPythonBuilder
       "libpython#{major_minor.join(".")}.dll"
     end
 
-    def version_check_format
-      return if @python_version =~ /^\d+\.\d+\.\d+$/
+    private
+
+    # Parse the line into base + flavor, enforcing the grammar and the
+    # JIT floor. Named errors, exit 109 — a malformed line is a config
+    # bug, never a silently misparsed name.
+    def parse_line
+      match = LINE_PATTERN.match(@python_version)
+      unless match
+        raise TebakoPythonBuilder::Error.new(
+          "Invalid python version format '#{@python_version}'. Expected format: x.y.z or x.y.z-jit", 109
+        )
+      end
+      @base_version = match[:base]
+      @flavor = match[:flavor]
+      return unless jit? && (major_minor <=> JIT_FLOOR) < 0
 
       raise TebakoPythonBuilder::Error.new(
-        "Invalid python version format '#{@python_version}'. Expected format: x.y.z", 109
+        "the jit flavor needs CPython >= #{JIT_FLOOR.join(".")} (PEP 744 landed in 3.13); " \
+        "'#{@python_version}' is a declaration bug", 109
       )
     end
   end

@@ -105,10 +105,18 @@ module TebakoPythonBuilder
     # surfaced meanwhile by the release shard's additive `abi` facet).
     # implementation + language_version are the spec 28 §8 axis:
     # `implementation` is REQUIRED for kind: runtime (the spawn edge's
-    # filter) and cpython is the python implementation of record, so
-    # `language_version` equals `version` (the mri rule). Both predate
-    # v0.1.0's manifests — cached v0.1.0 installs stay eligible through
-    # the resolver's compat window (tpkg::runtime_store).
+    # filter) and cpython is the python implementation of record.
+    # `version` is the published RELEASE LINE — a flavored line declares
+    # its full spelling ("3.13.15-jit"; the release index's python_version
+    # identity carries the same string, parsed off the package name).
+    # `language_version` is the language level the runtime implements:
+    # the mri rule (equals version) for the unflavored lines, the BASE
+    # version for a flavored one — a jit build speaks exactly CPython
+    # 3.13.15, and a pure-language requirement (>= 3.13, < 3.14) matches
+    # both flavors at the language level; choosing between them is a
+    # release-line pin, never a constraint (spec 28 §8's mode rule).
+    # Both predate v0.1.0's manifests — cached v0.1.0 installs stay
+    # eligible through the resolver's compat window (tpkg::runtime_store).
     def provides # rubocop:disable Metrics/MethodLength -- one declarative block per spec 03 §2.2; splitting it scatters the grammar
       python = TebakoPythonBuilder::PythonVersion.new(@python_version)
       {
@@ -116,7 +124,7 @@ module TebakoPythonBuilder
           "engine" => "python",
           "implementation" => "cpython",
           "version" => @python_version,
-          "language_version" => @python_version,
+          "language_version" => python.base_version,
           "abi_line" => python.abi_line,
           "platform" => @platform.tpkg_triplet
         },

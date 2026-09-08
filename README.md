@@ -239,7 +239,18 @@ never appear in workflow YAML.
 - `source_release: "v0.2.0"` — the tamatebako/python source release pin
   (v0.1.0's set plus 3.11.16).
 - `python:` — the version catalog (`catalog` / `full` / `tidy` sets),
-  mirroring tamatebako/python's `versions.yml`.
+  mirroring tamatebako/python's `versions.yml`. **Flavor lines** ride the
+  version string, never a new selector axis (spec 28 §8's truffleruby
+  native/jvm precedent): `3.13.15-jit` / `3.14.7-jit` build the same
+  pristine source with `--enable-experimental-jit` (PEP 744). The
+  exact-major LLVM toolchain + host python ≥ 3.11 the JIT's stencil regen
+  needs are **build-time-only** — the shipped runtime gains no system
+  dependency. CI provisions them per leg (`ci/provision_jit_toolchain.sh`
+  in the containers, `brew install llvm@N` on macos) from the matrix's
+  `jit_llvm` plan value, and the build gate re-verifies the major against
+  the extracted source's `Tools/jit/_llvm.py` (a drifted plan table is a
+  named build error, exit 113). Flavor lines sit in `catalog`/`full`,
+  never `tidy` (the smoke set stays minimal).
 
 ## Layout
 
@@ -254,19 +265,22 @@ never appear in workflow YAML.
   grammar / reads the pins (contract.yml is the SSOT).
 - `scripts/compute_matrix.rb` — the matrix engine
   (`--format matrix|env|pythons`): catalog × env vocabulary under the
-  dispatch filters → the leg matrix (with `host_id`), the env/python
-  expectation rows `publish.yml` later asserts.
+  dispatch filters → the leg matrix (with `host_id`, and `jit_llvm` for
+  the flavor lines), the env/python expectation rows `publish.yml` later
+  asserts.
 - `scripts/upload_release.rb` — the release upload/finalize port:
   sidecars, shards, the idempotent re-upload skip, the FINALIZE_ONLY
   pass. `publish.yml`'s release job drives it per platform with the
   `EXPECTED_ENV_MATRIX`/`EXPECTED_PYTHON_MATRIX` rows.
 - `tools/build_runtime` — the build entry point (fetch → verify → build
   → link → pack → package → sidecars).
-- `tools/boot_smoke` — the post-build acceptance gate (7 scenarios, 14
+- `tools/boot_smoke` — the post-build acceptance gate (8 scenarios, 16
   checks): stdlib + ssl + zlib imports off the mounted image, the dlopen
   extension path, the `TEBAKO_MOUNT_ROOT` 65/78 parity cases, the
-  bare-exe dev-mode contract. Needs `TEBAKO_TFS` (the tfs CLI, for the
-  mount probe) and the runtime-packages tree.
+  bare-exe dev-mode contract, and the `jit` flavor probe (a jit line
+  reports the JIT capability under `PYTHON_JIT=1`, a plain line reports
+  its absence). Needs `TEBAKO_TFS` (the tfs CLI, for the mount probe) and
+  the runtime-packages tree.
 - `build/lib/tebako_python_builder/` — the build model (the
   tebako-runtime-ruby `build/lib` port): Contract, Platform,
   PythonVersion, SourceFetcher, LinkUnit, Mlibs, PythonBuild,
@@ -278,6 +292,9 @@ never appear in workflow YAML.
   defines `tebako_driver_boot` / `tebako_mount_point` /
   `tebako_driver_contract_version` / `main`, and `main` forwards to
   `tebako_driver_boot`.
+- `ci/provision_jit_toolchain.sh` — the jit legs' per-leg toolchain
+  provisioning inside the tpkg-builder containers (apt.llvm.org +
+  deadsnakes on gnu, apk on musl; dispatches on the baked `TPKB_FAMILY`).
 - `.github/workflows/_build-platform.yml` — the reusable per-platform
   build leg (workflow_call): compute → contract check → matrix build →
   provenance → boot smoke → artifact upload.

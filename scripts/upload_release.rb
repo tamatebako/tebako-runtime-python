@@ -536,7 +536,11 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
   end
 
   def parse_package_filename(filename)
-    match = /\Atebako-runtime-#{Regexp.escape(@version)}-(\d+\.\d+\.\d+)-(.+?)(?:\.exe)?\z/.match(filename)
+    # The version capture is the line grammar's owner (PythonVersion),
+    # interpolated — a flavor line (x.y.z-jit) parses here exactly as the
+    # builder spelled it, never a second hand-written copy (spec 00 §10).
+    grammar = TebakoPythonBuilder::PythonVersion::LINE_GRAMMAR_SOURCE
+    match = /\Atebako-runtime-#{Regexp.escape(@version)}-(#{grammar})-(.+?)(?:\.exe)?\z/.match(filename)
     unless match
       puts "::warning::Cannot infer python/platform from package filename: #{filename}"
       return [nil, nil]
