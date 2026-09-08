@@ -92,9 +92,10 @@ case "${TPKB_FAMILY:-}" in
 
     list="/etc/apt/sources.list.d/llvm${MAJOR}.list"
     if [ ! -f "$list" ]; then
-      # --retry-all-errors: a connect flake on a runner is a leg failure
-      # otherwise (observed: arm64 gnu leg, curl (7) into an empty gpg).
-      curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+      # Retry connect flakes (a runner transient is a leg failure
+      # otherwise — observed: arm64 gnu leg, curl (7) into an empty gpg).
+      # NO --retry-all-errors: focal's curl 7.68 predates it (7.71).
+      curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused \
         https://apt.llvm.org/llvm-snapshot.gpg.key |
         gpg --yes --dearmor -o /usr/share/keyrings/llvm.gpg
       echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${MAJOR} main" \
@@ -118,7 +119,7 @@ case "${TPKB_FAMILY:-}" in
           exit 2
           ;;
       esac
-      curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+      curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused \
         "https://github.com/astral-sh/python-build-standalone/releases/download/${pbs_tag}/${pbs_name}.tar.gz" \
         -o /tmp/host-python.tar.gz
       echo "${pbs_sha}  /tmp/host-python.tar.gz" | sha256sum -c -
