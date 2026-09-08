@@ -103,12 +103,20 @@ module TebakoPythonBuilder
     # locked runtime capability triple. abi_line is the python major.minor
     # (the "3.13" line; the EXT-SUFFIX ABI grammar is TODO.python/04's,
     # surfaced meanwhile by the release shard's additive `abi` facet).
+    # implementation + language_version are the spec 28 §8 axis:
+    # `implementation` is REQUIRED for kind: runtime (the spawn edge's
+    # filter) and cpython is the python implementation of record, so
+    # `language_version` equals `version` (the mri rule). Both predate
+    # v0.1.0's manifests — cached v0.1.0 installs stay eligible through
+    # the resolver's compat window (tpkg::runtime_store).
     def provides # rubocop:disable Metrics/MethodLength -- one declarative block per spec 03 §2.2; splitting it scatters the grammar
       python = TebakoPythonBuilder::PythonVersion.new(@python_version)
       {
         "provides" => {
           "engine" => "python",
+          "implementation" => "cpython",
           "version" => @python_version,
+          "language_version" => @python_version,
           "abi_line" => python.abi_line,
           "platform" => @platform.tpkg_triplet
         },
