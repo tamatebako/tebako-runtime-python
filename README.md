@@ -297,9 +297,10 @@ never appear in workflow YAML.
   `tebako_driver_contract_version` / `main`, and `main` forwards to
   `tebako_driver_boot`.
 - `ci/provision_jit_toolchain.sh` — the jit legs' per-leg toolchain
-  provisioning inside the tpkg-builder containers (apt.llvm.org + a
-  pinned, sha256-verified python-build-standalone host python on gnu —
-  deadsnakes' focal dist is emptied — apk on musl; dispatches on the
+  provisioning inside the tpkg-builder containers (the image's own apt
+  sources first, apt.llvm.org only as fallback, + a pinned,
+  sha256-verified python-build-standalone host python on gnu —
+  deadsnakes' focal dist is emptied; apk on musl; dispatches on the
   baked `TPKB_FAMILY`).
 - `.github/workflows/_build-platform.yml` — the reusable per-platform
   build leg (workflow_call): compute → contract check → matrix build →
