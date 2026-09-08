@@ -100,7 +100,11 @@ source_release: "v0.2.0"
 # is a BUILD-TIME-only dependency (the JIT stencils are compiled into the
 # exe; the shipped runtime gains no runtime system dependency —
 # CPython's Tools/jit/README.md). tidy deliberately carries no jit line:
-# the dogfood driver stays the plain 3.13.15.
+# the dogfood driver stays the plain 3.13.15. jit legs exist for
+# linux-gnu + macos ONLY: CPython's JIT target whitelist
+# (Tools/jit/_targets.py) rejects *-linux-musl upstream — the matrix
+# engine skips the combination with a loud note (a musl enablement patch
+# would belong to tamatebako/python, not this factory).
 #
 # Set grammar (tebako-runtime-ruby's semantics):
 #   catalog — every version this factory publishes

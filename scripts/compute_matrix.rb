@@ -171,6 +171,16 @@ env.each do |row|
       # unknown filter, never a stack trace.
       usage_error "catalog line #{python.inspect}: #{e.message}"
     end
+    # CPython's JIT target whitelist (Tools/jit/_targets.py's get_target)
+    # rejects *-linux-musl — upstream has no musl JIT support (both 3.13
+    # and 3.14 fail mid-make: "invalid get_target value:
+    # 'x86_64-pc-linux-musl'"). jit lines are linux-gnu + macos only; a
+    # musl whitelist patch would belong to the source factory
+    # (tamatebako/python), never a per-leg workaround here.
+    if line.jit? && os == "linux-musl"
+      warn "note: #{python} skipped on linux-musl/#{arch} — CPython's JIT target whitelist rejects *-linux-musl (upstream)"
+      next
+    end
     legs << {
       python: python,
       os: os,

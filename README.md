@@ -250,7 +250,11 @@ never appear in workflow YAML.
   `jit_llvm` plan value, and the build gate re-verifies the major against
   the extracted source's `Tools/jit/_llvm.py` (a drifted plan table is a
   named build error, exit 113). Flavor lines sit in `catalog`/`full`,
-  never `tidy` (the smoke set stays minimal).
+  never `tidy` (the smoke set stays minimal). The jit legs are linux-gnu
+  + macos only: CPython's JIT target whitelist (`Tools/jit/_targets.py`)
+  rejects `*-linux-musl` upstream, so the matrix engine skips musl jit
+  legs with a loud note (a musl enablement patch would belong to
+  tamatebako/python, not this factory).
 
 ## Layout
 
@@ -293,8 +297,10 @@ never appear in workflow YAML.
   `tebako_driver_contract_version` / `main`, and `main` forwards to
   `tebako_driver_boot`.
 - `ci/provision_jit_toolchain.sh` — the jit legs' per-leg toolchain
-  provisioning inside the tpkg-builder containers (apt.llvm.org +
-  deadsnakes on gnu, apk on musl; dispatches on the baked `TPKB_FAMILY`).
+  provisioning inside the tpkg-builder containers (apt.llvm.org + a
+  pinned, sha256-verified python-build-standalone host python on gnu —
+  deadsnakes' focal dist is emptied — apk on musl; dispatches on the
+  baked `TPKB_FAMILY`).
 - `.github/workflows/_build-platform.yml` — the reusable per-platform
   build leg (workflow_call): compute → contract check → matrix build →
   provenance → boot smoke → artifact upload.
