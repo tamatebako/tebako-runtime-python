@@ -40,7 +40,10 @@
 #   themselves (the pinned source tarball, the pinned link unit, the tfs
 #   CLI) — there is NO source-build path for the driver stack here
 #   (contract.yml's link_unit_release comment), so the ruby factory's
-#   whole link-unit staging job has no counterpart.
+#   whole link-unit staging job has no counterpart. A jit python's leg
+#   additionally provisions its build-time-only toolchain
+#   (ci/provision_jit_toolchain.sh in the container, brew llvm@N on
+#   macos) from the leg's jit_llvm plan value.
 #
 # Container grammar (the ruby factory's): the linux legs run on the
 # ubuntu host and docker-run the tpkg-builder image per step — the musl
@@ -137,7 +140,7 @@ jobs:
           # Mirror the plan to the LOG: values written only to
           # $GITHUB_OUTPUT leave no diagnosable record when the legs skip.
           echo "plan (${{ inputs.platform }}): $count legs (python=${PYTHON_FILTER} arch=${ARCH_FILTER})"
-          jq -r '.include[] | "  \(.python) \(.os)/\(.arch) on \(.host)"' <<< "$legs"
+          jq -r '.include[] | "  \(.python) \(.os)/\(.arch) on \(.host)" + (if .jit_llvm != "" then " [llvm \(.jit_llvm)]" else "" end)' <<< "$legs"
 
   build:
     name: ${{ matrix.python }} / ${{ matrix.os }}-${{ matrix.arch }}
@@ -175,7 +178,9 @@ jobs:
           save-always: true
 
       # --- provisioning (host-native legs only; the container legs'
-      # toolchain is baked into the tpkg-builder image) -----------------
+      # toolchain is baked into the tpkg-builder image — except the jit
+      # legs' exact-major LLVM + host python, which the container build
+      # step provisions per leg via ci/provision_jit_toolchain.sh) ------
       - name: Setup Ruby (the build tooling's interpreter)
         if: matrix.os == 'macos'
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
@@ -188,6 +193,16 @@ jobs:
       - name: Install brew packages
         if: matrix.os == 'macos'
         run: brew bundle --no-upgrade -f
+
+      # The jit legs' build-time-only LLVM — deliberately NOT in the
+      # Brewfile: a plain leg must never pay for the big keg-only llvm@N
+      # installs. CPython's own discovery (Tools/jit/_llvm.py) finds the
+      # keg via `brew --prefix llvm@N`; the build gate verifies the major
+      # matches the source's pin. list-guarded — the Brewfile's
+      # --no-upgrade rule applies here too.
+      - name: Install the jit toolchain (jit legs only)
+        if: matrix.os == 'macos' && matrix.jit_llvm != ''
+        run: brew list "llvm@${{ matrix.jit_llvm }}" >/dev/null 2>&1 || brew install "llvm@${{ matrix.jit_llvm }}"
 
       - name: Setup MSys
         if: matrix.os == 'windows'
@@ -211,13 +226,18 @@ jobs:
             mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-zlib
 
       # --- build -------------------------------------------------------
+      # The jit legs provision their build-time-only toolchain first
+      # (exact-major LLVM + host python >= 3.11; matrix.jit_llvm is empty
+      # on plain legs, which skip the call entirely).
       - name: Build the runtime (container legs)
         if: matrix.container != null
         run: |
           set -euo pipefail
-          docker run --rm -e GITHUB_TOKEN -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
+          docker run --rm -e GITHUB_TOKEN -e JIT_LLVM="${{ matrix.jit_llvm }}" \
+            -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
             "${{ matrix.container }}" bash -c '
               set -e
+              if [ -n "${JIT_LLVM:-}" ]; then ci/provision_jit_toolchain.sh "$JIT_LLVM"; fi
               tools/build_runtime --python "${{ matrix.python }}"
               # Root in the container writes root-owned files onto the
               # bind mount; hand them back to the runner user so the host

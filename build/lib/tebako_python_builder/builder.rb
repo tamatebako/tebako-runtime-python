@@ -49,6 +49,7 @@ module TebakoPythonBuilder
                    link_unit_release: nil, link_unit_pid: nil)
       @repo_root = repo_root
       @python_version = python_version
+      @python = TebakoPythonBuilder::PythonVersion.new(python_version)
       @tebako_version = tebako_version
       @prefix = File.expand_path(prefix)
       @output = output
@@ -62,7 +63,11 @@ module TebakoPythonBuilder
     end
 
     def run # rubocop:disable Metrics/MethodLength
-      (tarball, sha256) = fetcher.fetch(@python_version)
+      # A flavored line (x.y.z-jit) consumes the SAME pristine source
+      # tarball as its base — the flavor is a configure-time ability of
+      # the line, never a second source artifact (the source factory's
+      # SHA256SUMS names base versions only).
+      (tarball, sha256) = fetcher.fetch(@python.base_version)
       puts "-- Building tebako runtime for python #{@python_version} " \
            "(tebako #{@tebako_version}, #{@platform.host_id}, #{File.basename(tarball)})"
       link_unit_dir = link_unit.stage(File.join(@prefix, "link-unit"))

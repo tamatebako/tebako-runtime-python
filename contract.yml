@@ -91,11 +91,22 @@ source_release: "v0.2.0"
 # tamatebako/ruby's versions.yml vs tebako-runtime-ruby's
 # .github/matrix.json, with the catalog kept here per TODO.python/02.
 #
+# Flavor lines (the x.y.z-jit suffix — grammar owned by
+# PythonVersion::LINE_PATTERN): a build ability rides the RELEASE LINE,
+# never a selector axis (spec 28 §8's truffleruby native/jvm precedent).
+# A jit line builds the SAME pristine source with
+# --enable-experimental-jit (PEP 744, 3.13+) and publishes as a sibling
+# line: tebako-runtime-<tebako>-3.13.15-jit-<triplet>. The LLVM toolchain
+# is a BUILD-TIME-only dependency (the JIT stencils are compiled into the
+# exe; the shipped runtime gains no runtime system dependency —
+# CPython's Tools/jit/README.md). tidy deliberately carries no jit line:
+# the dogfood driver stays the plain 3.13.15.
+#
 # Set grammar (tebako-runtime-ruby's semantics):
 #   catalog — every version this factory publishes
-#   full    — the tip of every supported line
+#   full    — the tip of every supported line (jit lines included)
 #   tidy    — the primary dogfood set (the xml2rfc driving line)
 python:
-  catalog: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
-  full: ["3.11.16", "3.12.14", "3.13.15", "3.14.7"]
+  catalog: ["3.11.16", "3.12.14", "3.13.15", "3.14.7", "3.13.15-jit", "3.14.7-jit"]
+  full: ["3.11.16", "3.12.14", "3.13.15", "3.14.7", "3.13.15-jit", "3.14.7-jit"]
   tidy: ["3.13.15"]

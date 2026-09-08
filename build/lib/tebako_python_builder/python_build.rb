@@ -73,6 +73,7 @@ module TebakoPythonBuilder
                    link_unit:, link_unit_dir:, repo_root:, jobs: nil)
       @platform = platform
       @python_version = python_version
+      @python = TebakoPythonBuilder::PythonVersion.new(python_version)
       @prefix = prefix
       @tarball = tarball
       @src_sha256 = src_sha256
@@ -80,12 +81,14 @@ module TebakoPythonBuilder
       @link_unit_dir = link_unit_dir
       @repo_root = repo_root
       @jobs = jobs
+      @jit_env = {}
     end
 
     attr_reader :src_dir, :stage_dir
 
     def run
       extract
+      gate_jit_toolchain if @python.jit?
       write_setup_local
       configure
       substitute_makefiles
@@ -160,9 +163,22 @@ module TebakoPythonBuilder
       File.join(@prefix, "src")
     end
 
+    # The build tree spelling: flavored lines build in a FLAVOR-QUALIFIED
+    # tree (tfs-python-<base>-src-jit). The tarball's top-level directory
+    # is flavor-less (tfs-python-<base>-src — the source factory's naming),
+    # and the plain line's tree is this factory's scratch build tree, so a
+    # jit extract must never unpack onto it: extraction lands in a staging
+    # subdir first and is renamed into place (same filesystem). A fresh
+    # extraction — never a copy of a possibly-configured plain tree, whose
+    # objects would carry the wrong configure flags (make does not track
+    # flag changes).
+    def tree_name
+      "tfs-python-#{@python.base_version}-src#{@python.jit? ? "-#{@python.flavor}" : ""}"
+    end
+
     def extract
-      @src_dir = File.join(src_parent, "tfs-python-#{@python_version}-src")
-      marker = File.join(src_parent, ".#{@python_version}.src-sha256")
+      @src_dir = File.join(src_parent, tree_name)
+      marker = File.join(src_parent, ".#{tree_name}.src-sha256")
       if File.directory?(@src_dir) && File.file?(marker) && File.read(marker).strip == @src_sha256
         puts "-- CPython source #{@python_version} already extracted (sha256 #{@src_sha256})"
         return
@@ -170,13 +186,30 @@ module TebakoPythonBuilder
 
       FileUtils.rm_rf(@src_dir, secure: true)
       FileUtils.mkdir_p(src_parent)
-      TebakoPythonBuilder::BuildHelpers.run_with_capture(["tar", "-xzf", @tarball, "-C", src_parent])
-      unless File.directory?(@src_dir)
+      # A crashed extract's staging leftover is reclaimed FIRST — tar
+      # onto a non-empty dir would keep files the tarball no longer
+      # carries (debris, not a pristine tree).
+      FileUtils.rm_rf(staging_parent, secure: true)
+      TebakoPythonBuilder::BuildHelpers.run_with_capture(
+        ["tar", "-xzf", @tarball, "-C", staging_parent]
+      )
+      staged = File.join(staging_parent, "tfs-python-#{@python.base_version}-src")
+      unless File.directory?(staged)
         raise TebakoPythonBuilder::Error.new(
-          "#{@tarball} did not extract to tfs-python-#{@python_version}-src under #{src_parent}", 103
+          "#{@tarball} did not extract to tfs-python-#{@python.base_version}-src under #{staging_parent}", 103
         )
       end
+      FileUtils.mv(staged, @src_dir)
+      FileUtils.rm_rf(staging_parent, secure: true)
       File.write(marker, "#{@src_sha256}\n")
+    end
+
+    # The extraction staging dir (sibling of the build trees; extract
+    # reclaims it before every unpack and removes it after the rename).
+    def staging_parent
+      dir = File.join(src_parent, ".extract-staging")
+      FileUtils.mkdir_p(dir)
+      dir
     end
 
     # Modules/Setup.local: makesetup reads it FIRST and a first definition
@@ -199,13 +232,17 @@ module TebakoPythonBuilder
     # (sysconfig data and the .pyc source paths then spell the runtime VFS
     # path; PYTHONHOME — set by the fs TU from the driver's effective root
     # — is what actually drives getpath at boot, TODO.python/01's probe).
+    # A jit line adds --enable-experimental-jit (bare = "yes": the JIT is
+    # compiled in AND on by default; PYTHON_JIT=0/1 override at runtime,
+    # CPython whatsnew 3.13 — selecting the jit line IS opting into it).
     def configure
       args = ["./configure",
               "--prefix=#{@platform.mount_root}",
               "--disable-shared",
               "--with-openssl=#{openssl_prefix}",
               "--with-openssl-rpath=no"]
-      puts "-- Configuring CPython #{@python_version} (#{@platform.host_id})"
+      args << "--enable-experimental-jit" if @python.jit?
+      puts "-- Configuring CPython #{@python_version} (#{@platform.host_id}#{@python.jit? ? ", JIT on" : ""})"
       TebakoPythonBuilder::BuildHelpers.run_with_capture(args, env: configure_env, chdir: src_dir)
     rescue TebakoPythonBuilder::Error => e
       raise TebakoPythonBuilder::Error.new("'build_runtime' configure step failed: #{e.message}", 103)
@@ -238,7 +275,128 @@ module TebakoPythonBuilder
         { "LDFLAGS" => "-pthread" }
       else
         {}
+      end.merge(@jit_env)
+    end
+
+    # --- the JIT toolchain gate (jit lines only) -------------------------
+    #
+    # CPython's copy-and-patch JIT compiles its stencils at BUILD time with
+    # an exact-major LLVM toolchain (clang + llvm-readobj; llvm-objdump
+    # optional) and a host python >= 3.11 running Tools/jit/build.py
+    # (Tools/jit/README.md, PEP 744). Build-time ONLY: the stencils are
+    # baked into the exe — the shipped runtime gains no runtime system
+    # dependency (the tebako invariant). The gate runs before configure so
+    # a missing toolchain is a named error (exit 113), never a mid-make
+    # surprise, and it PATH-augments the configure/make child env so
+    # CPython's own tool discovery (Tools/jit/_llvm.py: unversioned or
+    # -N-suffixed tools on PATH, or the homebrew llvm@N prefix) finds what
+    # this gate verified.
+
+    # The authoritative LLVM major for this source: read from the
+    # extracted tree (Tools/jit/_llvm.py's _LLVM_VERSION — the owner) and
+    # asserted against the model's plan-time table (the parity arm — the
+    # matrix legs provisioned from that table).
+    def gate_jit_toolchain
+      llvm_py = File.join(src_dir, "Tools", "jit", "_llvm.py")
+      match = File.read(llvm_py).match(/^_LLVM_VERSION = (\d+)$/)
+      unless match
+        raise TebakoPythonBuilder::Error.new(
+          "#{llvm_py} carries no _LLVM_VERSION pin — the jit build cannot verify its toolchain", 113
+        )
       end
+      major = match[1].to_i
+      planned = @python.jit_llvm_major
+      if major != planned
+        raise TebakoPythonBuilder::Error.new(
+          "JIT toolchain drift: #{@python_version}'s Tools/jit/_llvm.py pins LLVM #{major} but " \
+          "PythonVersion::JIT_LLVM_MAJORS planned #{planned} — fix the table (the owner is the source)", 113
+        )
+      end
+
+      clang_dir = resolve_jit_tool("clang", major)
+      readobj_dir = resolve_jit_tool("llvm-readobj", major)
+      missing = []
+      missing << "clang" unless clang_dir
+      missing << "llvm-readobj" unless readobj_dir
+      unless missing.empty?
+        raise TebakoPythonBuilder::Error.new(
+          "no LLVM #{major} #{missing.join("/")} resolvable for the #{@python_version} build — " \
+          "the jit toolchain is provisioned per leg (CI: ci/provision_jit_toolchain.sh in the container legs, " \
+          "brew install llvm@#{major} on macos); it is a build-time-only dependency", 113
+        )
+      end
+      gate_jit_host_python
+      @jit_env = { "PATH" => ([clang_dir, readobj_dir].uniq + [ENV.fetch("PATH", "")]).join(File::PATH_SEPARATOR) }
+      puts "-- JIT toolchain: LLVM #{major} (clang: #{clang_dir}/clang, llvm-readobj: #{readobj_dir}/llvm-readobj)"
+    end
+
+    # The dir carrying `tool` at exactly the required major (nil when
+    # nowhere resolvable). Probes, in order: <tool>-<major> on PATH
+    # (the apt.llvm.org layout), unversioned <tool> on PATH at the right
+    # major, then the platform's versioned tool dirs (homebrew's keg-only
+    # llvm@N prefix on macos; debian's /usr/lib/llvm-N/bin and alpine's
+    # /usr/lib/llvmN/bin on linux). Version check mirrors CPython's
+    # _llvm.py: `version N.` exactly, Apple clang excluded.
+    def resolve_jit_tool(tool, major) # rubocop:disable Metrics/MethodLength
+      path_dirs = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR)
+      candidates = path_dirs.map { |dir| File.join(dir, "#{tool}-#{major}") } +
+                   path_dirs.map { |dir| File.join(dir, tool) } +
+                   jit_tool_dirs(major).map { |dir| File.join(dir, tool) }
+      candidates.uniq.each do |candidate|
+        next unless File.file?(candidate) && File.executable?(candidate)
+        return File.dirname(candidate) if jit_tool_version_match?(candidate, major)
+      end
+      nil
+    end
+
+    def jit_tool_dirs(major)
+      dirs = []
+      if @platform.macos?
+        begin
+          dirs << File.join(@platform.brew_prefix("llvm@#{major}"), "bin")
+        rescue TebakoPythonBuilder::Error
+          nil # the keg is absent — the gate reports the miss by name
+        end
+      else
+        dirs << "/usr/lib/llvm-#{major}/bin" << "/usr/lib/llvm#{major}/bin"
+      end
+      dirs
+    end
+
+    def jit_tool_version_match?(tool, major)
+      out, st = Open3.capture2e(tool, "--version")
+      return false unless st.exitstatus&.zero?
+
+      # CPython's own grammar (Tools/jit/_llvm.py): (LLVM|clang) version
+      # N.x.y, Apple clang never (its major lineage is not LLVM's).
+      out.match?(/(?<!Apple )(?:LLVM|clang) version\s+#{major}\.\d+\.\d+/)
+    end
+
+    # PYTHON_FOR_REGEN runs Tools/jit/build.py during make; the jit README
+    # floors the host python at 3.11 (the gnu tpkg-builder image is
+    # focal-based — its python3, when present at all, is 3.8). The probe
+    # mirrors configure's own PYTHON_FOR_REGEN search (newest versioned
+    # name first, bare python3 last — a deadsnakes python3.11 NEVER
+    # replaces the system python3).
+    def gate_jit_host_python
+      found = nil
+      probed = %w[python3.14 python3.13 python3.12 python3.11 python3]
+      probed.each do |name|
+        out, st = Open3.capture2e(name, "--version")
+        next unless st.exitstatus&.zero?
+
+        match = out.match(/Python (\d+)\.(\d+)/)
+        found ||= "#{name} (#{out.strip})"
+        return if match && match[1].to_i == 3 && match[2].to_i >= 11
+      rescue Errno::ENOENT
+        next
+      end
+
+      raise TebakoPythonBuilder::Error.new(
+        "the #{@python_version} jit build needs a host python >= 3.11 for the stencil regen " \
+        "(Tools/jit/build.py via PYTHON_FOR_REGEN); probed #{probed.join(", ")}: " \
+        "#{found || "none on PATH"} — CI provisions one per leg (ci/provision_jit_toolchain.sh)", 113
+      )
     end
 
     def openssl_prefix
@@ -330,7 +488,7 @@ module TebakoPythonBuilder
     end
 
     def make
-      TebakoPythonBuilder::BuildHelpers.run_with_capture(["make", "-j", ncores.to_s], chdir: src_dir)
+      TebakoPythonBuilder::BuildHelpers.run_with_capture(["make", "-j", ncores.to_s], env: @jit_env, chdir: src_dir)
     rescue TebakoPythonBuilder::Error => e
       raise TebakoPythonBuilder::Error.new("'build_runtime' build step failed: #{e.message}", 104)
     end

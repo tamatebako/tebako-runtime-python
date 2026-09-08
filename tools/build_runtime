@@ -59,7 +59,8 @@
 #
 # Exit codes (named, never silent): 64 usage · 103 configure · 104 build
 # · 105 install/assemble · 106 abi probe · 109 version grammar · 112
-# platform/link input · 121/122 source fetch (sha mismatch / download)
+# platform/link input · 113 jit toolchain gate (llvm/host-python parity)
+# · 121/122 source fetch (sha mismatch / download)
 # · 123 link-unit miss/download · 124 link-unit sha mismatch/incomplete
 # · 125 tfs CLI fetch/verify · 131 image assemble/pack · 141/143 boot
 # smoke (tools/boot_smoke).

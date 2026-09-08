@@ -51,6 +51,20 @@
 #   mount-root-malformed TEBAKO_MOUNT_ROOT=relative/path -> exit 65
 #   override-ungranted   TEBAKO_MOUNT_ROOT against an env image whose
 #                        layout lacks the grant -> exit 78
+#   jit                  the flavor split, both directions: a jit LINE
+#                        (x.y.z-jit, the release-line flavor axis —
+#                        spec 28 §8) boots with PYTHON_JIT=1 and reports
+#                        the JIT capability; a plain line reports its
+#                        ABSENCE (a --enable-experimental-jit leak into
+#                        the plain build fails the leg)          [POSIX]
+#
+# The jit probe is per-line: 3.14+ answers sys._jit.is_available() AND
+# is_enabled() (the sys._jit namespace is 3.14's — python/cpython#133231;
+# the explicit PYTHON_JIT=1 keeps the probe independent of the build's
+# default); 3.13 has no in-process JIT introspection, so the probe reads
+# the configure-time -D_Py_JIT out of the installed sysconfig
+# (CONFIGURE_CFLAGS_NODIST) — the tier-2 optimizer install at init
+# (PYTHON_JIT=1) is itself exercised by the boot surviving.
 #
 # POSIX legs run the full set. A windows leg (TODO.python/05 — descoped
 # from the 02 matrix until the mingw port lands) runs bare + the named-
@@ -62,7 +76,7 @@
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
 #                    [--scenario all|bare|boot|payload|bad-mount|
 #                                mount-root-override|mount-root-malformed|
-#                                override-ungranted]
+#                                override-ungranted|jit]
 #
 # Exit codes: 0 green · 141 usage/resolution · 143 a scenario failed.
 
@@ -235,8 +249,38 @@ def ungranted_fixture(tfs, dir, platform)
   image
 end
 
+# The line the built runtime claims, recovered from the executable's name
+# (the same spelling scripts/upload_release.rb's parser emits):
+# tebako-runtime-<tebako version>-<line>-<triplet>[.exe]. Returns nil for
+# an --exe path outside the grammar — the flavor assertion is meaningless
+# without a declared line (the dev-debug path; the caller degrades).
+def expected_line(executable, platform)
+  name = File.basename(executable, ".exe")
+  prefix = "tebako-runtime-#{File.read(File.join(REPO_ROOT, "VERSION")).strip}-"
+  suffix = "-#{platform.host_id}"
+  return nil unless name.start_with?(prefix) && name.end_with?(suffix)
+
+  TebakoPythonBuilder::PythonVersion.new(name[prefix.length...-suffix.length])
+rescue TebakoPythonBuilder::Error
+  nil
+end
+
+# The JIT capability probe, per line (the header's jit block): 3.14+
+# answers sys._jit; 3.13 has no sys._jit, so the probe reads the
+# configure-time -D_Py_JIT out of the installed sysconfig. Runs under
+# PYTHON_JIT=1, so 3.14's is_enabled() reports the requested state.
+def jit_probe(line)
+  if line.major_minor[0] > 3 || line.major_minor[1] >= 14
+    'import sys; print("JIT-PROBE"); ' \
+      'print("jit-capable:", bool(sys._jit.is_available() and sys._jit.is_enabled()))'
+  else
+    'import sysconfig; print("JIT-PROBE"); ' \
+      'print("jit-capable:", "_Py_JIT" in (sysconfig.get_config_var("CONFIGURE_CFLAGS_NODIST") or ""))'
+  end
+end
+
 KNOWN_SCENARIOS = %w[bare boot payload bad-mount mount-root-override mount-root-malformed
-                     override-ungranted].freeze
+                     override-ungranted jit].freeze
 # Scenarios that build fixture images with the tfs CLI.
 TFS_SCENARIOS = %w[payload override-ungranted].freeze
 
@@ -244,7 +288,8 @@ def selected_scenarios(platform, only)
   selected = []
   selected += %w[bare] if %w[all bare].include?(only)
   if platform.posix?
-    selected += %w[boot payload mount-root-override] if %w[all boot payload mount-root-override].include?(only)
+    selected += %w[boot payload mount-root-override jit] if
+      %w[all boot payload mount-root-override jit].include?(only)
   end
   selected += %w[bad-mount mount-root-malformed override-ungranted] if
     %w[all bad-mount mount-root-malformed override-ungranted].include?(only)
@@ -261,7 +306,7 @@ def selected_scenarios(platform, only)
   selected
 end
 
-def run_scenarios(executable, platform, selected, tfs:) # rubocop:disable Metrics/MethodLength
+def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable Metrics/MethodLength
   image = "#{executable.sub(/\.exe\z/, "")}.tfs"
   probe = <<~PY
     import json, ssl, sys, zlib
@@ -333,6 +378,21 @@ def run_scenarios(executable, platform, selected, tfs:) # rubocop:disable Metric
         out, err, st = boot(executable, ["-c", "print('unreached')"],
                             { "TEBAKO_RUNTIME_IMAGE" => fixture, "TEBAKO_MOUNT_ROOT" => File.join(dir, "elsewhere") })
         expect_exit("override-ungranted", out, err, st, 78)
+      when "jit"
+        # Both directions ride the same probe: a jit LINE must report the
+        # capability, a plain line its ABSENCE (a --enable-experimental-jit
+        # leak into the plain build fails the leg). PYTHON_JIT=1 makes the
+        # ask explicit regardless of the build's configure default.
+        unless File.file?(image)
+          check("jit", false, "no sibling env image #{image}")
+          next
+        end
+        out, err, st = boot(executable, ["-c", jit_probe(line)],
+                            { "TEBAKO_RUNTIME_IMAGE" => image, "PYTHON_JIT" => "1" })
+        expect_ok("jit", out, err, st, "JIT-PROBE")
+        expectation = line.jit? ? "jit-capable: True" : "jit-capable: False"
+        check("jit: capability matches the #{line.python_version} line", out.include?(expectation),
+              "expected #{expectation.inspect}\nstdout: #{out}\nstderr: #{err}")
       end
     end
   end
@@ -341,8 +401,21 @@ end
 executable = resolve_executable(options[:runtime_root], options[:exe])
 puts "-- Boot smoke: #{executable} (#{platform.host_id})"
 selected = selected_scenarios(platform, options[:scenario])
+line = expected_line(executable, platform)
+if selected.include?("jit") && line.nil?
+  # The jit assertion needs the declared line; an --exe path outside the
+  # runtime-name grammar (a dev build) can't carry one. An explicit ask
+  # is a usage error; inside "all" the scenario degrades to a loud skip.
+  if options[:scenario] == "jit"
+    usage_error("scenario 'jit' needs a runtime-named executable " \
+                "(tebako-runtime-<tebako>-<line>-<triplet>); got #{File.basename(executable)}")
+  end
+  puts "note: jit scenario skipped — #{File.basename(executable)} is outside the runtime-name grammar"
+  selected -= ["jit"]
+end
+usage_error("no scenarios selected") if selected.empty?
 tfs = (selected & TFS_SCENARIOS).any? ? resolve_tfs(options[:tfs]) : nil
-run_scenarios(executable, platform, selected, tfs: tfs)
+run_scenarios(executable, platform, selected, tfs: tfs, line: line)
 
 if $failures.positive?
   puts "#{$failures} scenario check(s) failed"

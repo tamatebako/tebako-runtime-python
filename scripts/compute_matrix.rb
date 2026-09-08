@@ -57,6 +57,12 @@
 #   host_id                     — this factory's package-name platform id
 #                                 (Platform::HOST_IDS — the exe/image
 #                                 grammar tebako-runtime-<ver>-<python>-<host_id>)
+#   jit_llvm                    — the LLVM major a jit line's build
+#                                 provisions ("" for unflavored lines),
+#                                 from PythonVersion::JIT_LLVM_MAJORS;
+#                                 the build re-verifies it against the
+#                                 extracted source's Tools/jit/_llvm.py
+#                                 (the parity arm — PythonBuild's gate)
 #   container                   — the tpkg-builder image ref with
 #                                 contract.yml's container_version tag
 #                                 applied, null for the runner-native legs
@@ -157,12 +163,21 @@ env.each do |row|
   selected_env << row.merge("host_id" => host_id)
   container = row["container"] && "#{row['container']}:#{container_version}"
   pythons.each do |python|
+    line = begin
+      TebakoPythonBuilder::PythonVersion.new(python)
+    rescue TebakoPythonBuilder::Error => e
+      # A catalog line the model rejects (a bad grammar, a jit line below
+      # the 3.13 floor) is a config bug — the same exit-64 class as an
+      # unknown filter, never a stack trace.
+      usage_error "catalog line #{python.inspect}: #{e.message}"
+    end
     legs << {
       python: python,
       os: os,
       arch: arch,
       host: row.fetch("host"),
       host_id: host_id,
+      jit_llvm: line.jit? ? line.jit_llvm_major.to_s : "",
       container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])
     }

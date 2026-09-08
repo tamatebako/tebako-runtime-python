@@ -44,5 +44,10 @@ $defs:
     type: array
     items:
       type: string
-      pattern: '^\d+\.\d+\.\d+$'
+      # The line grammar's owner is PythonVersion::LINE_PATTERN
+      # (build/lib/tebako_python_builder/python_version.rb): x.y.z plus
+      # the optional flavor suffix (the release-line ability axis —
+      # spec 28 §8). This pattern mirrors it; the lint gate validates
+      # the catalog against both.
+      pattern: '^\d+\.\d+\.\d+(-jit)?$'
     uniqueItems: true
