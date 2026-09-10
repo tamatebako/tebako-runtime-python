@@ -23,8 +23,11 @@ port): fetch/verify → configure/make → driver link → env-image pack →
 packaging → sidecars, gated by `ci/check_symbol_provenance.sh` and
 `tools/boot_smoke`. CI carries the ruby factory's shape:
 `_build-platform.yml` + the four `build-*.yml` triggers, and
-`publish.yml` drives `scripts/upload_release.rb` per platform. The
-macos-arm64 leg is dogfooded locally green (7/7 boot-smoke scenarios).
+`publish.yml` drives `scripts/upload_release.rb` per platform, then
+OpenPGP-signs every release asset (`scripts/sign_release.rb`, the
+tebako-runtime-ruby#154 port) behind the `TEBAKO_RELEASE_SIGNING_ENABLED`
+house gate. The macos-arm64 leg is dogfooded locally green (7/7
+boot-smoke scenarios).
 
 The owner opened the publish gate 2026-09-05 (the TODO.python chain's
 xml2rfc proof proceeds against the published runtime): the first

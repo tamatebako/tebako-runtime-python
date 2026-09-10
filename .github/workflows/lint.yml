@@ -26,8 +26,9 @@
 # The lint gate: everything that can be proven WITHOUT real builds —
 # contract.yml against its schema + the driver-source parity arm, the
 # version catalog resolvable, the leg matrix computable, every authored
-# YAML/JSON parseable, every authored ruby file ruby -c clean. The build
-# legs' own gates (provenance, boot smoke) live in _build-platform.yml.
+# YAML/JSON parseable, every authored ruby file ruby -c clean, and the
+# spec suite green. The build legs' own gates (provenance, boot smoke)
+# live in _build-platform.yml.
 name: lint
 
 on:
@@ -94,6 +95,11 @@ jobs:
             ruby -c "$f" >/dev/null || { echo "::error::ruby -c failed: $f"; exit 1; }
             echo "ruby -c ok: $f"
           done
+
+      # The spec suite (spec/): proves without real builds, exactly this
+      # gate's charter.
+      - name: rspec
+        run: bundle exec rspec
 
       - name: parse every authored YAML/JSON
         run: |
