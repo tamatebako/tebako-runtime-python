@@ -256,6 +256,34 @@ jobs:
           git config --global core.longpaths true
           tools/build_runtime --python "${{ matrix.python }}"
 
+      # Spec 31 §5/§8.4: sign (Developer ID Application, hardened
+      # runtime, the ci/runtime.entitlements pair) + notarize the macOS
+      # runtime exe IN-LEG, before the symbol-provenance check and the
+      # boot smoke — every downstream gate, and the publish stage's
+      # .sha256 sidecar, anchors the exact SIGNED bytes (sign-then-hash
+      # is mandatory). Gated on the repo variable APPLE_SIGNING_ENABLED
+      # (unsigned stays first-class without it — spec 00 invariant 7;
+      # armed + a missing secret is a fast named failure). The exe is
+      # left quarantine-marked: the boot smoke — the jit_llvm legs
+      # exercise CPython's JIT — then runs under Gatekeeper's exact
+      # download path, proving the allow-jit/disable-library-validation
+      # pair on the signed exe.
+      - name: Sign + notarize the runtime exe (macos, spec 31)
+        if: matrix.os == 'macos'
+        shell: bash
+        env:
+          APPLE_SIGNING_ENABLED: ${{ vars.APPLE_SIGNING_ENABLED }}
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ASC_KEY_P8: ${{ secrets.APPLE_ASC_KEY_P8 }}
+          APPLE_ASC_KEY_ID: ${{ secrets.APPLE_ASC_KEY_ID }}
+          APPLE_ASC_ISSUER_ID: ${{ secrets.APPLE_ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          runtime="tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
+          bash ci/macos-sign-notarize-runtime.sh "runtime-packages/$runtime"
+
       # --- the gates (a red gate skips the upload, and the release
       # job's completeness check then fails the run loudly) -------------
       - name: Check symbol provenance (container legs)
