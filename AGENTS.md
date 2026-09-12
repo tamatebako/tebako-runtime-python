@@ -43,10 +43,14 @@ BOOT_LIVE gate + raw early-boot passthrough
 the gnu legs), and the `fcntl64` export (tamatebako/tebako#529).
 The POSIX boot-smoke CI legs were red-by-design on the old v2.1.5
 pin and are green on the v2.1.10+ line. The windows row
-is descoped out of the 02 matrix (TODO.python/05 — CPython upstream
-has zero mingw support; the port is a tamatebako/python msys2/ucrt64
-patch
-series), and `tools/boot_smoke` hard-kills a wedged child against a
+(63e8336's descope) returns with TODO.python/05 item 2: CPython
+upstream has zero mingw support, so the windows leg builds from the
+line's msys2/ucrt64 scenario tree
+(`tfs-python-<base>-src-windows-msys.tar.gz`, tamatebako/python's
+patches/<line>/ series) — `scripts/compute_matrix.rb` skips a windows
+leg loudly when the pinned `source_release` ships no such asset for
+the line (and skips jit lines on windows outright: upstream's JIT
+whitelist admits MSVC targets only), and `tools/boot_smoke` hard-kills a wedged child against a
 CLOCK_MONOTONIC deadline instead of wedging with it. The
 linked-driver decision and the preload-shim re-exec rationale are
 recorded in README.md — do not reopen them here; the wrapper pattern

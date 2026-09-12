@@ -77,14 +77,17 @@ container_version: "v1"
 link_unit_release: "v2.3.2"
 
 # The tamatebako/python SOURCE release this factory consumes
-# (tfs-python-<version>-src.tar.gz + SHA256SUMS, sha256-verified).
-# v0.2.0 (2026-09-05) adds 3.11.16; the v0.1.0 set (3.12.14, 3.13.15,
-# 3.14.7) carried forward sha256-verified. A build leg fails closed
-# while this is empty.
-source_release: "v0.2.0"
+# (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
+# sha256-verified). v0.3.0 adds the platform-scenario axis: 3.14.7 ships
+# tfs-python-3.14.7-src-windows-msys.tar.gz (the msys2/ucrt64 patch
+# series, TODO.python/05 item 1) alongside the unsuffixed linux-gnu
+# back-compat asset every version carries. v0.2.0 (2026-09-05) added
+# 3.11.16; the v0.1.0 set (3.12.14, 3.13.15, 3.14.7) carried forward
+# sha256-verified. A build leg fails closed while this is empty.
+source_release: "v0.3.0"
 
 # The python version catalog this factory builds and publishes. Mirrors
-# tamatebako/python's versions.yml at source release v0.2.0 (3.11.16,
+# tamatebako/python's versions.yml at source release v0.3.0 (3.11.16,
 # 3.12.14, 3.13.15, 3.14.7). The source factory owns the
 # version PINS (url/sha256/line); this catalog selects which published
 # versions the matrix grammar expands over — the same split as
