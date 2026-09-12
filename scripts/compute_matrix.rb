@@ -197,5 +197,10 @@ end
 case format
 when "matrix" then puts JSON.generate({ include: legs })
 when "env" then puts JSON.generate(selected_env)
-when "pythons" then puts JSON.generate(pythons)
+# The leg-derived python set, in catalog order: a line with no leg under
+# the active filters (a jit line on linux-musl — upstream's JIT target
+# whitelist rejects *-linux-musl, above) can never land on the release, so
+# the publish gate must not EXPECT it (the v0.1.3 musl incompleteness
+# failure). matrix/env/pythons all derive from the same filtered walk.
+when "pythons" then puts JSON.generate(pythons.select { |python| legs.any? { |leg| leg[:python] == python } })
 end
