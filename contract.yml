@@ -90,10 +90,19 @@ link_unit_release: "v2.3.2"
 # 0017/0036/0037/0041/0045/0054/0056/0059/0060/0063/0075/0078/0097/0100)
 # plus the syslibs deviation — the round-2/3 compile+link walls
 # (VPATH, thread_pthread, alarm//dev/ptmx probes, winconsoleio,
-# version/pathcch libs). v0.2.0 (2026-09-05) added
+# version/pathcch libs). v0.3.3 carries the mingw shared-build
+# machinery (tamatebako/python#18): 0009/0010 (declspec exports + the
+# enable_shared mingw arms — LDLIBRARY=libpython3.14.dll.a /
+# DLLLIBRARY=libpython3.14.dll), the dynload_win cluster (0011-0015 —
+# the .cp314-mingw_x86_64_ucrt_gnu.pyd rename), the two interpreter
+# boot walls the PR's own smoke leg forced (0018: winreg/msvcrt/
+# _winapi bootstrap-static; 0034: sys.winver/dllhandle under
+# defined(MS_WINDOWS) && defined(Py_ENABLE_SHARED)), 0066
+# (_Py_CheckPython3), and 0039 (-municode + win resources +
+# pythonw.exe). v0.2.0 (2026-09-05) added
 # 3.11.16; the v0.1.0 set (3.12.14, 3.13.15, 3.14.7) carried forward
 # sha256-verified. A build leg fails closed while this is empty.
-source_release: "v0.3.2"
+source_release: "v0.3.3"
 
 # The python version catalog this factory builds and publishes. Mirrors
 # tamatebako/python's versions.yml at source release v0.3.2 (3.11.16,
