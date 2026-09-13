@@ -63,11 +63,13 @@ module TebakoPythonBuilder
     end
 
     def run # rubocop:disable Metrics/MethodLength
-      # A flavored line (x.y.z-jit) consumes the SAME pristine source
-      # tarball as its base — the flavor is a configure-time ability of
-      # the line, never a second source artifact (the source factory's
-      # SHA256SUMS names base versions only).
-      (tarball, sha256) = fetcher.fetch(@python.base_version)
+      # A flavored line (x.y.z-jit) consumes the SAME source tarball as its
+      # base — the flavor is a configure-time ability of the line, never a
+      # second source artifact (the source factory's SHA256SUMS names base
+      # versions only). The platform selects the scenario: a mingw/ucrt
+      # host builds from the line's patched windows-msys tree, every POSIX
+      # host from the unsuffixed pristine one.
+      (tarball, sha256) = fetcher.fetch(@python.base_version, platform: @platform)
       puts "-- Building tebako runtime for python #{@python_version} " \
            "(tebako #{@tebako_version}, #{@platform.host_id}, #{File.basename(tarball)})"
       link_unit_dir = link_unit.stage(File.join(@prefix, "link-unit"))
