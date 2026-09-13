@@ -1,0 +1,103 @@
+name: bump-source-pin
+
+# Receives the dispatch fired by tamatebako/python's runtime-pin-bump
+# workflow after a successful release-src publish, and opens a pull
+# request bumping the `source_release` pin in contract.yml to the
+# published tag. The PR runs the runtime matrix (the per-platform
+# triggers); nothing auto-merges -- a human reviews and merges.
+#
+# Idempotent: a repeated dispatch for the same tag no-ops when the pin is
+# already at that tag or the bump branch already exists. The branch is
+# pushed once, plainly -- never force-pushed.
+#
+# The PAT (TEBAKO_CI_PAT_TOKEN, the same secret the other tamatebako repos
+# use for cross-repo work) is used for the push and PR creation so the
+# pull_request event actually triggers CI; a PR created with the default
+# GITHUB_TOKEN would not. GITHUB_TOKEN is the fallback. NOTE: the org
+# PAT's fine-grained repository selection predates this repo and 404s
+# every API call from here (tebako-runtime-python#5 — owner action); the
+# PAT's repo selection must cover this repo before this receiver can do
+# its job.
+
+on:
+  repository_dispatch:
+    types: ["tfs-python-src-release"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "tamatebako/python source release tag (e.g. v0.3.6)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: bump source_release to ${{ github.event.client_payload.tag || inputs.tag }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.TEBAKO_CI_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: bump the pin
+        id: bump
+        env:
+          TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+        run: |
+          set -euo pipefail
+          file="contract.yml"
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::unexpected tag '$TAG'"; exit 1 ;;
+          esac
+          current=$(grep -oE 'source_release: "[^"]+"' "$file" | cut -d'"' -f2)
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$TAG" ]; then
+            echo "source_release already at $TAG -- nothing to do"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          branch="bot/source-pin-$TAG"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            echo "branch $branch already exists -- nothing to do"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sed -i "s/source_release: \"$current\"/source_release: \"$TAG\"/" "$file"
+          grep -n 'source_release: ' "$file"
+          # The pin must read back through the SSOT tooling, never just
+          # the sed pattern.
+          test "$(ruby scripts/versions --pin source_release)" = "$TAG"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: push branch and open pull request
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+          CURRENT: ${{ steps.bump.outputs.current }}
+          BRANCH: ${{ steps.bump.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add contract.yml
+          git commit -m "chore: pin tamatebako/python src $TAG (was $CURRENT)"
+          git push origin "$BRANCH"
+          body="$RUNNER_TEMP/source-pin-pr-body.md"
+          cat > "$body" <<EOF
+          Automated pin bump: tamatebako/python published source release **$TAG** (release-src completed successfully and dispatched this bump).
+
+          - \`source_release\` in \`contract.yml\`: \`$CURRENT\` -> \`$TAG\`
+          - Source release: https://github.com/tamatebako/python/releases/tag/$TAG
+
+          CI runs the runtime matrix on this pull request. Nothing auto-merges -- a human reviews and merges.
+          EOF
+          gh pr create --base main --head "$BRANCH" \
+            --title "Pin tamatebako/python src $TAG" \
+            --body-file "$body"
