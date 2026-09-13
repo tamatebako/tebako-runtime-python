@@ -123,10 +123,14 @@ module TebakoPythonBuilder
       "python#{major_minor.join(".")}"
     end
 
-    # The shared libpython name of an msys --enable-shared build
-    # (libpython3.13.dll) — kept for the day the windows leg answers the
-    # issue-40 question with "shared". The v1 windows leg builds
-    # --disable-shared (no DLL facet).
+    # The shared libpython name of the msys --enable-shared build
+    # (libpython3.14.dll) — the PE name the exe's imports resolve. The
+    # build stages it beside the runtime package as <package>.dll
+    # (unique per leg); the store materializes it under THIS name at
+    # install (the release manifest's dll.install_as), the layout card
+    # declares it as runtime_dll (schema_minor 3), and tools/boot_smoke
+    # materializes it in-leg. This method is the name's single owner
+    # (invariant 10).
     def msys_dll_name
       "libpython#{major_minor.join(".")}.dll"
     end

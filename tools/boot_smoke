@@ -265,6 +265,25 @@ rescue TebakoPythonBuilder::Error
   nil
 end
 
+# The msys shared build: the exe's PE imports resolve libpython<X.Y>.dll
+# in the exe's own directory (the OS's application-dir rule — before any
+# driver code runs), but the package dir holds the DLL under the unique
+# package name (<runtime>.dll — two same-ABI legs would collide on the PE
+# name). Materialize the PE-named copy next to the exe BEFORE any
+# scenario boots it, mirroring the store entry the product's install
+# assembles (exe + image + DLL under the manifest's dll.install_as name).
+# A missing package DLL degrades to the OS loader's own error — loud
+# enough at this layer.
+def materialize_python_dll(executable, platform, line)
+  return unless platform.msys? && line
+
+  source = "#{executable.sub(/\.exe\z/, "")}.dll"
+  return unless File.file?(source)
+
+  dest = File.join(File.dirname(executable), line.msys_dll_name)
+  FileUtils.cp(source, dest) unless File.file?(dest)
+end
+
 # The JIT capability probe, per line (the header's jit block): 3.14+
 # answers sys._jit; 3.13 has no sys._jit, so the probe reads the
 # configure-time -D_Py_JIT out of the installed sysconfig. Runs under
@@ -402,6 +421,7 @@ executable = resolve_executable(options[:runtime_root], options[:exe])
 puts "-- Boot smoke: #{executable} (#{platform.host_id})"
 selected = selected_scenarios(platform, options[:scenario])
 line = expected_line(executable, platform)
+materialize_python_dll(executable, platform, line)
 if selected.include?("jit") && line.nil?
   # The jit assertion needs the declared line; an --exe path outside the
   # runtime-name grammar (a dev build) can't carry one. An explicit ask

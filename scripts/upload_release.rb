@@ -137,11 +137,10 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
   # one-per-package so consumers match on python_version / platform /
   # filename, and a .tfs file never becomes a top-level entry of its own.
   # The additive `contract_version` key (roadmap 45) follows the same
-  # compat rule, and so would a windows shared build's libpython DLL
+  # compat rule, and so does a windows leg's libpython DLL
   # (<package>.dll) folded as `dll` with the PE name the store entry
-  # materializes (`install_as`) — the v1 windows leg builds
-  # --disable-shared, so no dll ships today (PythonVersion#msys_dll_name
-  # keeps the name for the day the leg answers "shared").
+  # materializes (`install_as`; PythonVersion#msys_dll_name is the
+  # name's single owner).
   def build_manifest_entries(packages) # rubocop:disable Metrics/AbcSize
     executables, images, dlls = partition_packages(packages)
     executables.sort_by { |package| package.basename.to_s }.map do |package|
@@ -510,8 +509,8 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
     }
   end
 
-  # The additive libpython-DLL metadata (windows, the --enable-shared
-  # fallback shape — nothing ships it today): the asset rides under the
+  # The additive libpython-DLL metadata (windows legs, --enable-shared
+  # since v0.3.3's MSYS2-series port): the asset rides under the
   # package's unique name; `install_as` is the PE name the store entry
   # materializes next to the exe so the exe's imports resolve (the single
   # owner of that name is PythonVersion#msys_dll_name — consumers ignore
@@ -1081,13 +1080,15 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
   end
 
   # The non-executable artifacts a package is expected to carry: the
-  # filesystem image everywhere. The windows libpython DLL is NOT
-  # expected — the v1 windows leg builds --disable-shared, so the dll
-  # facet is opportunistic (folded into the package's entry when the
-  # workspace carries one, never required); the day a leg answers the
-  # shared question, the expectation joins this list in the same PR.
+  # filesystem image everywhere, plus the runtime DLL on windows — the
+  # windows-msys legs build --enable-shared (the source release's MSYS2
+  # 0009/0010 machinery, v0.3.3+), so the staged <package>.dll is as
+  # required as the image: a leg that failed to stage it is an
+  # incomplete release, never an optional facet.
   def expected_facets(name)
-    ["#{name}.tfs"]
+    facets = ["#{name}.tfs"]
+    facets << "#{name}.dll" if name.include?("windows")
+    facets
   end
 
   # The metadata a landed package owes: one sidecar per landed asset plus
@@ -1098,8 +1099,8 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
   end
 
   # An unowned DLL means a leg's upload never landed. (The reverse gap —
-  # a windows executable with no DLL — is the CORRECT shape here: the
-  # --disable-shared build links libpython statically.)
+  # a windows executable with no DLL — is a completeness failure caught
+  # by expected_facets: the windows-msys legs build --enable-shared.)
   def report_dll_gaps(executables, dlls)
     (dlls - executables).sort.each do |name|
       puts "::warning::libpython DLL #{name}.dll has no matching runtime package; " \

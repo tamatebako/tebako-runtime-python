@@ -131,6 +131,32 @@ module TebakoPythonBuilder
       FileUtils.mkdir_p(File.dirname(output))
       FileUtils.cp(built_exe, output)
       FileUtils.chmod(0o755, output)
+      stage_python_dll(built_exe) if @platform.msys?
+    end
+
+    # msys only (the --enable-shared shape): stage the just-linked
+    # libpython<X.Y>.dll next to the runtime executable under the
+    # PACKAGE's name (<runtime>.dll — unique per leg: two same-ABI legs
+    # share the PE name and would collide in the merged release
+    # workspace; the manifest's dll.install_as flows the PE name to the
+    # store entry, and tools/boot_smoke materializes it in-leg). The DLL
+    # links next to the exe in the build tree (the Makefile's
+    # $(DLLLIBRARY) rule); its absence means the build regressed to a
+    # static shape — a named error, never a silent skip. The name's
+    # single owner is PythonVersion#msys_dll_name (invariant 10).
+    def stage_python_dll(built_exe)
+      dll = File.join(File.dirname(built_exe), @python.msys_dll_name)
+      unless File.file?(dll)
+        raise TebakoPythonBuilder::Error.new(
+          "expected the shared build's #{@python.msys_dll_name} next to #{built_exe} " \
+          "(the windows-msys leg must configure --enable-shared — issue 40)", 130
+        )
+      end
+
+      dest = "#{output.sub(/\.exe\z/, "")}.dll"
+      FileUtils.cp(dll, dest)
+      FileUtils.chmod(0o755, dest)
+      puts "-- Runtime DLL: #{dest} (installs as #{@python.msys_dll_name})"
     end
 
     def assemble_and_pack_image(build, sha256, link_unit, link_unit_dir, tfs)

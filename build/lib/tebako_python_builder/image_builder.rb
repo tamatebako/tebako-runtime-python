@@ -59,7 +59,13 @@ module TebakoPythonBuilder
     # effective root, so the interpreter follows TEBAKO_MOUNT_ROOT (the
     # factory owns both sides of the grant; the boot smoke asserts the
     # chain end-to-end). The additive preload_shim grant (schema_minor 2)
-    # names exactly the staged shim's in-image path.
+    # names exactly the staged shim's in-image path. The additive
+    # runtime_dll basename (schema_minor 3) is emitted for MSYS builds
+    # only — flowed from PythonVersion#msys_dll_name, the name's single
+    # owner (invariant 10); the driver exports it as TEBAKO_RUNTIME_DLL
+    # into the handoff env, and the tfs PE closure walk excludes a bare
+    # import name matching it (spec 22 §2.1 — the OS's basename-reuse
+    # rule binds the already-loaded copy). POSIX builds omit the key.
     LAYOUT_DECLARATION = {
       "schema" => "layout",
       "schema_version" => 1,
@@ -192,6 +198,8 @@ module TebakoPythonBuilder
       )
       unless @platform.msys?
         declaration["preload_shim"] = File.join("lib", "tebako", @link_unit.preload_shim_name)
+      else
+        declaration["runtime_dll"] = @python.msys_dll_name
       end
       File.write(path, YAML.dump(declaration))
       puts "   ... env image layout declaration: #{path}"
