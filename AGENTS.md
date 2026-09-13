@@ -22,11 +22,14 @@ implemented (the tebako-runtime-ruby `build/lib`
 port): fetch/verify → configure/make → driver link → env-image pack →
 packaging → sidecars, gated by `ci/check_symbol_provenance.sh` and
 `tools/boot_smoke`. CI carries the ruby factory's shape:
-`_build-platform.yml` + the four `build-*.yml` triggers, and
-`publish.yml` drives `scripts/upload_release.rb` per platform, then
-OpenPGP-signs every release asset (`scripts/sign_release.rb`, the
-tebako-runtime-ruby#154 port) behind the `TEBAKO_RELEASE_SIGNING_ENABLED`
-house gate. The matrix is green end to end, the windows-ucrt64 leg
+`_build-platform.yml` + the four `build-*.yml` triggers; under the
+`publish.yml` coordinator each build leg publishes its own runtime
+package (`scripts/upload_release.rb`) and OpenPGP-signs its served
+names (`scripts/sign_release.rb`) in-leg — the spec 13 §2a
+de-rendezvous, tebako-runtime-ruby#161's pattern — behind the
+`TEBAKO_RELEASE_SIGNING_ENABLED` house gate, and the coordinator's one
+release job audits the whole matrix against the release, read-only.
+The matrix is green end to end, the windows-ucrt64 leg
 included.
 
 The publish gate opened 2026-09-05; the first release line is v0.1.0,
