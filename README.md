@@ -3,28 +3,23 @@
 Builds and publishes the prebuilt tebako CPython runtime packages
 (`tebako-runtime-<tebako-version>-<python-version>-<triplet>[.exe]`) that
 the tebako bootstrap/shim resolves at press/run time. Modeled on
-[tebako-runtime-ruby](https://github.com/tamatebako/tebako-runtime-ruby)
-(TODO.python/02).
+[tebako-runtime-ruby](https://github.com/tamatebako/tebako-runtime-ruby).
 
-**Status: builds green, unpublished.** The full chain — fetch/verify →
-configure/make → driver link → env-image pack → packaging → provenance
-gate → boot smoke — is implemented in `build/lib/tebako_python_builder/`
-and wired into CI (`build-*.yml` × 4 over `_build-platform.yml`, the
-ruby factory's coordinator shape; `publish.yml` carries the release
-machinery via `scripts/upload_release.rb`). The macos-arm64 leg is
-dogfooded locally green: 7/7 boot-smoke scenarios (imports of
-json/ssl/zlib off the mounted image, the dlopen extension path, the
-`TEBAKO_MOUNT_ROOT` 65/78 parity cases) plus the symbol-provenance gate.
+**Status: live.** Releases (`v*`) publish the per-platform runtime
+packages (latest line: `v0.1.x`); consumers pin them by `contract.yml` +
+the registry. The full chain — fetch/verify → configure/make → driver
+link → env-image pack → packaging → provenance gate → boot smoke — is
+implemented in `build/lib/tebako_python_builder/` and wired into CI
+(`build-*.yml` × 4 over `_build-platform.yml`, the ruby factory's
+coordinator shape; `publish.yml` carries the release machinery via
+`scripts/upload_release.rb`). The matrix is green end to end —
+linux-gnu / linux-musl / macos (x86_64 + arm64) and windows-ucrt64. The
+boot smoke asserts imports of json/ssl/zlib off the mounted image, the
+dlopen extension path, and the `TEBAKO_MOUNT_ROOT` 65/78 parity cases
+on POSIX, and the bare + named-error trio (65/69/78) on windows, plus
+the symbol-provenance gate everywhere.
 
-Nothing here has published an artifact: releases stay draft-gated until
-the xml2rfc payload (TODO.python/03) proves the chain end-to-end. One
-upstream dependency: the POSIX boot smoke in CI needs a tamatebako/tebako
-link-unit release carrying the `fcntl` interposition fix
-([tamatebako/tebako#524](https://github.com/tamatebako/tebako/pull/524));
-the pinned `link_unit_release: "v2.1.5"` predates it, so POSIX CI legs
-are expected red until a newer tebako release lands and the pin moves.
-
-## DECISION: the driver is LINKED into the interpreter, not wrapped
+## The driver is linked into the interpreter, not wrapped
 
 Python runtimes ship the spec-17 driver **linked into the `python3`
 executable** (the ruby pattern), not the java-style wrapper exe
@@ -42,9 +37,10 @@ Rationale:
   `TEBAKO_RUNTIME_IMAGE` handoff, `TEBAKO_MOUNT_ROOT` redirect with exit
   65 (malformed) / 78 (ungranted), the same named errors. Parity is
   assertable in tests against the ruby driver's contract suite where the
-  cases overlap (TODO.python/02 acceptance).
-- CPython is relocatable via `PYTHONHOME`/`PYTHONPATH` — TODO.python/01's
-  probe built both pinned lines (3.12.14, 3.13.15) and verified a moved
+  cases overlap.
+- CPython is relocatable via `PYTHONHOME`/`PYTHONPATH` — the
+  [relocation probe](https://github.com/tamatebako/python/blob/main/docs/relocation-probe.md)
+  built the pinned lines and verified a moved
   tree resolves stdlib + ssl against the relocated prefix with **zero
   patches**. The fs TU sets `PYTHONHOME` from the driver's effective
   mount root at boot; the interpreter itself is never patched.
@@ -135,7 +131,7 @@ loadable module cannot carry undefined symbols, so the extensions link
 `--tebako-image`/`TEBAKO_RUNTIME_IMAGE` with the same named errors, and
 runs the interpreter only when nothing was mounted (bare/dev mode).
 There is no preload tier on windows — with any mount the fs TU exits
-**69** with a named error (roadmap 30 phase 2). The shared build ships
+**69** with a named error. The shared build ships
 the DLL as a `<package>.dll` release facet (the release manifest's
 `dll.install_as` names the PE spelling the store materializes beside
 the exe), and the mingw support set (libgcc/libwinpthread) is
@@ -201,7 +197,7 @@ tfs-python-<v>-src.tar.gz          link-unit-<ver>-<pid>.tar.gz
 
 Both inputs are **published release artifacts**, consumed by pin from
 `contract.yml` — never source checkouts of sibling repos (prebuilt
-artifacts flow downward; ecosystem AGENTS.md §0/§4).
+artifacts flow downward).
 
 ## Matrix grammar
 
@@ -267,7 +263,7 @@ never appear in workflow YAML.
 
 - `VERSION` — the package version: package names and the release tag
   follow it (`v$(cat VERSION)`). `0.0.0` was the never-published
-  placeholder; the real line opened at 0.1.0 (owner GO 2026-09-05).
+  placeholder; the real line opened at 0.1.0.
 - `contract.yml` + `schema/` — the pins and the version catalog, and
   their JSON Schema; `scripts/check_contract.rb` validates (CI),
   including the driver-source parity arm (contract.yml ↔ the tebako
@@ -325,20 +321,13 @@ never appear in workflow YAML.
   `ruby -c` sweep.
 - `Brewfile` — macOS host build dependencies (CI).
 
-## Follow-ups (explicitly NOT this PR)
+## Follow-ups
 
 1. The boot-contract parity suite (`spec/`) — exit-code parity against
    the ruby driver's contract suite where the cases overlap (the boot
    smoke covers the local acceptance; the cross-runtime `spec/` port is
-   its own PR).
-2. The windows shared-library question (the ucrt64 libpython analog of
-   the ruby factory's issue-40 DLL) — decided with the first windows
-   leg; the upload port already models the dll facet.
-3. Container digest pinning, the `link_unit_release` bump (once a tebako
-   release carries tamatebako/tebako#524), and the VERSION opening line.
-4. Build-graph diff-awareness for the four build triggers (they fan out
+   a separate change).
+2. Container digest pinning.
+3. Build-graph diff-awareness for the four build triggers (they fan out
    21 legs per event today; the ruby factory's plan job computes the
    diff — the headers note the follow-up).
-
-Artifacts stay unpublished until the xml2rfc payload (TODO.python/03)
-proves the chain.

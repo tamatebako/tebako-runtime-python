@@ -102,9 +102,8 @@ module TebakoPythonBuilder
 
     # The abi_line the image manifest's provides block declares (spec 03
     # §2.2 — what native-extension payloads match their version constraint
-    # against): the "3.13"-style line. (The full ABI-line grammar — the
-    # EXT_SUFFIX class — is TODO.python/04's; the release shard carries
-    # the additive `abi` facet with the exact EXT_SUFFIX stem.)
+    # against): the "3.13"-style line. (The release shard carries the
+    # additive `abi` facet with the exact EXT_SUFFIX stem.)
     def abi_line
       major_minor.join(".")
     end

@@ -26,7 +26,7 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-# Contract check (roadmap 45's python analog): validates contract.yml
+# Contract check: validates contract.yml
 # against schema/contract.schema.yml, cross-checks the version sets
 # (tidy/full must be subsets of the catalog — a version that builds but
 # never publishes is a config bug, not a leg), and locks the TWO
@@ -118,14 +118,14 @@ class ContractCheck
     match = body.match(RUST_PATTERN)
     unless match
       return ["#{origin} carries no `pub const TEBAKO_CONTRACT_VERSION: u32 = N;` — " \
-              "the driver must compile its contract version in (roadmap 45)"]
+              "the driver must compile its contract version in"]
     end
 
     driver_version = match[1].to_i
     return [] if driver_version == contract_version
 
     ["contract.yml contract_version is #{contract_version} but TEBAKO_CONTRACT_VERSION in #{origin} " \
-     "is #{driver_version} — a contract bump edits both in the same commit (roadmap 45)"]
+     "is #{driver_version} — a contract bump edits both in the same commit"]
   rescue StandardError => e
     ["the driver-source parity arm could not read its second representation: #{e.message} " \
      "(needs network to raw.githubusercontent.com or TEBAKO_DRIVER_SRC=<local lib.rs>; fails closed)"]

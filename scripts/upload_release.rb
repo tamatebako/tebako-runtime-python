@@ -57,7 +57,7 @@ RUNTIME_REPO = "tamatebako/tebako-runtime-python"
 # (the repo, python_version naming, EXPECTED_PYTHON_MATRIX, the windows
 # DLL facet) is adapted in place and commented where it differs.
 
-# The bootstrap <-> runtime contract version (roadmap 45) emitted into every
+# The bootstrap <-> runtime contract version emitted into every
 # manifest entry. contract.yml at the repo root is the release pipeline's
 # single source of truth; the compiled-in TEBAKO_CONTRACT_VERSION in the
 # runtime driver is CI-locked to agree with it (scripts/check_contract.rb).
@@ -128,15 +128,15 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
     version = data.is_a?(Hash) ? data["contract_version"] : nil
     return version if version.is_a?(Integer) && version.positive?
 
-    raise "#{CONTRACT_YML} does not define a positive integer contract_version (roadmap 45)"
+    raise "#{CONTRACT_YML} does not define a positive integer contract_version"
   end
 
   # One manifest entry per runtime PACKAGE (the executable). A sibling
-  # filesystem image (<package>.tfs, item 30) is folded into the
+  # filesystem image (<package>.tfs) is folded into the
   # package's entry as an additive `image` key -- top-level entries stay
   # one-per-package so consumers match on python_version / platform /
   # filename, and a .tfs file never becomes a top-level entry of its own.
-  # The additive `contract_version` key (roadmap 45) follows the same
+  # The additive `contract_version` key follows the same
   # compat rule, and so does a windows leg's libpython DLL
   # (<package>.dll) folded as `dll` with the PE name the store entry
   # materializes (`install_as`; PythonVersion#msys_dll_name is the
@@ -500,7 +500,7 @@ class ReleaseManager # rubocop:disable Metrics/ClassLength
   end
 
   # The additive image metadata: name, sha256, size (consumers ignoring the
-  # `image` key keep working; item 30's compat rule).
+  # `image` key keep working — additive keys are backward-compatible).
   def image_entry(image)
     {
       filename: image.basename.to_s,

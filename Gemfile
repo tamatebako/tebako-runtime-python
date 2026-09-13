@@ -17,7 +17,7 @@ gem "base64", "~> 0.2"
 # The spec suite (tebako-runtime-ruby's Gemfile is the model): rspec
 # arrived with the signing pass's coverage (spec/sign_release_spec.rb).
 # rubocop and the remaining suites (boot-contract parity, matrix planner,
-# builder model) stay the TODO.python/02 follow-up.
+# builder model) are follow-ups.
 group :development, :test do
   gem "rspec", "~> 3.13"
 end

@@ -80,7 +80,7 @@ link_unit_release: "v2.3.2"
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
 # sha256-verified). v0.3.0 adds the platform-scenario axis: 3.14.7 ships
 # tfs-python-3.14.7-src-windows-msys.tar.gz (the msys2/ucrt64 patch
-# series, TODO.python/05 item 1) alongside the unsuffixed linux-gnu
+# series) alongside the unsuffixed linux-gnu
 # back-compat asset every version carries. v0.3.1 carries the
 # MSYS2-MINGW-packages 0007 port (tamatebako/python#16): the checked-in
 # PC/errmap.h needs -I$(srcdir)/PC on the msys build path, which
@@ -132,7 +132,7 @@ source_release: "v0.3.6"
 # version PINS (url/sha256/line); this catalog selects which published
 # versions the matrix grammar expands over — the same split as
 # tamatebako/ruby's versions.yml vs tebako-runtime-ruby's
-# .github/matrix.json, with the catalog kept here per TODO.python/02.
+# .github/matrix.json; the catalog itself lives here next to the pins.
 #
 # Flavor lines (the x.y.z-jit suffix — grammar owned by
 # PythonVersion::LINE_PATTERN): a build ability rides the RELEASE LINE,

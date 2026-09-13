@@ -4,8 +4,7 @@ The binding rules are the ecosystem's: **tamatebako/AGENTS.md** (the
 workspace root) — read it first. The short version as applied here:
 
 - **Draft PRs only.** No merges to `main`, no tags, no releases without
-  the owner's explicit go-ahead. Nothing publishes from this repo until
-  the TODO.python chain is proven (the xml2rfc payload, 03).
+  the owner's explicit go-ahead.
 - **Prebuilt artifacts flow downward.** This factory CONSUMES published
   releases — CPython source tarballs from tamatebako/python, the link
   unit from tamatebako/tebako — pinned in `contract.yml`. Never a source
@@ -16,9 +15,10 @@ workspace root) — read it first. The short version as applied here:
 - **YAML** for all authored config/manifests; named errors and named
   exit codes, never silent fallbacks.
 
-## Repo status: builds green, unpublished
+## Repo status: live
 
-`tools/build_runtime` is implemented (the tebako-runtime-ruby `build/lib`
+Releases publish (the `v0.1.x` line). `tools/build_runtime` is
+implemented (the tebako-runtime-ruby `build/lib`
 port): fetch/verify → configure/make → driver link → env-image pack →
 packaging → sidecars, gated by `ci/check_symbol_provenance.sh` and
 `tools/boot_smoke`. CI carries the ruby factory's shape:
@@ -26,12 +26,11 @@ packaging → sidecars, gated by `ci/check_symbol_provenance.sh` and
 `publish.yml` drives `scripts/upload_release.rb` per platform, then
 OpenPGP-signs every release asset (`scripts/sign_release.rb`, the
 tebako-runtime-ruby#154 port) behind the `TEBAKO_RELEASE_SIGNING_ENABLED`
-house gate. The macos-arm64 leg is dogfooded locally green (7/7
-boot-smoke scenarios).
+house gate. The matrix is green end to end, the windows-ucrt64 leg
+included.
 
-The owner opened the publish gate 2026-09-05 (the TODO.python chain's
-xml2rfc proof proceeds against the published runtime): the first
-release line is v0.1.0. The pinned
+The publish gate opened 2026-09-05; the first release line is v0.1.0,
+and the xml2rfc payload has since proven the chain end-to-end. The pinned
 `link_unit_release: "v2.3.2"` carries the v2.3 arc — the spec-30
 spawn dispatch, shim routing, the spec-29 wrapper-exe driver, and
 the dup-class interpose with the aarch64 dup2 repair
@@ -42,9 +41,8 @@ BOOT_LIVE gate + raw early-boot passthrough
 (tamatebako/tebako#527, the static-jemalloc boot deadlock that wedged
 the gnu legs), and the `fcntl64` export (tamatebako/tebako#529).
 The POSIX boot-smoke CI legs were red-by-design on the old v2.1.5
-pin and are green on the v2.1.10+ line. The windows row
-(63e8336's descope) returns with TODO.python/05 item 2: CPython
-upstream has zero mingw support, so the windows leg builds from the
+pin and are green on the v2.1.10+ line. The windows leg:
+CPython upstream has zero mingw support, so the leg builds from the
 line's msys2/ucrt64 scenario tree
 (`tfs-python-<base>-src-windows-msys.tar.gz`, tamatebako/python's
 patches/<line>/ series) — `scripts/compute_matrix.rb` skips a windows

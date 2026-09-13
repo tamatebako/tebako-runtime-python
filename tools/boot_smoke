@@ -26,9 +26,9 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-# Boot smoke for a built tebako python runtime (TODO.python/02's
-# acceptance, the ruby factory's boot_smoke role — stdlib-only here, no
-# rspec surface): boots the built exe against its sibling env image and
+# Boot smoke for a built tebako python runtime (the ruby factory's
+# boot_smoke role — stdlib-only here, no rspec surface): boots the built
+# exe against its sibling env image and
 # asserts the driver contract end to end. Scenarios:
 #
 #   bare                 no image: the exe CANNOT boot alone — the
@@ -70,11 +70,10 @@
 # (CONFIGURE_CFLAGS_NODIST) — the tier-2 optimizer install at init
 # (PYTHON_JIT=1) is itself exercised by the boot surviving.
 #
-# POSIX legs run the full set. A windows leg (TODO.python/05 — descoped
-# from the 02 matrix until the mingw port lands) runs bare + the named-
-# error trio (bad-mount, mount-root-malformed, override-ungranted) — the
-# in-image imports are roadmap 30 phase 2 there (README's windows
-# boundary).
+# POSIX legs run the full set. A windows leg runs bare + the named-
+# error trio (bad-mount, mount-root-malformed, override-ungranted) —
+# with no preload tier on windows, the in-image imports stay POSIX-only
+# (README's windows boundary).
 #
 # Usage:
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
