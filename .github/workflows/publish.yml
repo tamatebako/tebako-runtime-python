@@ -31,23 +31,22 @@
 #   one python on one platform    (python_filter=<version>, platform=<one>)
 # plus the era baseline (python_filter=catalog, platform=all).
 #
-# Every slice fans out to _build-platform.yml to BUILD. Publishing lives
-# ONLY here, in the single `release` job that runs once per coordinator
-# run after every platform build: the release is one shared resource, so
-# publishing must serialize — and serializing per-platform publish jobs
-# through a shared concurrency group displaced (cancelled) queued
-# publishes (the 2026-08-09 lesson). One release job per run means a run
-# publishes every platform it built, never fewer. Each per-platform
-# invocation writes ONLY names that platform owns (its payload assets +
-# each package's .sha256 sidecars and .manifest.json shard — issue 139's
-# per-asset metadata, no merge path); the shared monolithic conveniences
-# (manifest.json / SHA256SUMS.txt) and the release notes are derived from
-# the release's own shards + asset listing by the ONE finalize invocation
-# that runs after every platform landed.
+# Every slice fans out to _build-platform.yml to BUILD, and — spec 13
+# §2a's de-rendezvous (tebako-runtime-ruby#161's pattern) — to PUBLISH
+# and SIGN in-leg: the leg that built a package uploads its write-once
+# names (payload + .sha256 sidecars + .manifest.json shard) and signs
+# every served name, all inside the leg that holds the fresh bytes. No
+# shared mutable file exists anymore (the monolithic manifest.json /
+# SHA256SUMS.txt are gone — `tebako-pkg release-index` derives them
+# consumer-side), so N legs publish concurrently with zero rendezvous and
+# one failed leg no longer blocks the green legs' packages. What remains
+# here is the ONE release job per coordinator run: it AUDITS the whole
+# matrix against the release (read-only) — the one duty that genuinely
+# needs the full matrix.
 #
 # Deliberate deviations from the ruby coordinator:
-#   - publish defaults to FALSE (ruby: true). This factory has no release
-#     yet; the first publish is an explicit operator act.
+#   - publish defaults to FALSE (ruby: true): publishing is an explicit
+#     operator act.
 #   - No repository_dispatch trigger yet: the python source factory does
 #     not dispatch "tebako release" here (the ruby chain's pin-moved
 #     rebuilds). The trigger arrives when tamatebako/python wires it.
@@ -59,7 +58,11 @@
 #     suffices — no downstream cascade listens to this factory's releases
 #     yet. The PAT preference returns WITH the cascade wiring, and the
 #     PAT's repo selection must cover this repo by then
-#     (tebako-runtime-python#5 — owner action).
+#     (tebako-runtime-python#5 — owner action). The legs' in-leg
+#     publish/sign steps ride the same runner token.
+#   - No registry render/PR step in the release job: this factory has no
+#     tpkg-registry.yaml mirror yet (the ruby coordinator's second
+#     release-job duty); when the mirror arrives the step ports with it.
 name: publish
 
 on:
@@ -102,6 +105,8 @@ jobs:
       python_filter: ${{ inputs.python_filter }}
       arch_filter: ${{ inputs.arch_filter }}
       audit: ${{ inputs.audit }}
+      publish: ${{ inputs.publish }}
+      force_rebuild: ${{ inputs.force_rebuild }}
     secrets: inherit
 
   linux-gnu:
@@ -112,6 +117,8 @@ jobs:
       python_filter: ${{ inputs.python_filter }}
       arch_filter: ${{ inputs.arch_filter }}
       audit: ${{ inputs.audit }}
+      publish: ${{ inputs.publish }}
+      force_rebuild: ${{ inputs.force_rebuild }}
     secrets: inherit
 
   linux-musl:
@@ -122,6 +129,8 @@ jobs:
       python_filter: ${{ inputs.python_filter }}
       arch_filter: ${{ inputs.arch_filter }}
       audit: ${{ inputs.audit }}
+      publish: ${{ inputs.publish }}
+      force_rebuild: ${{ inputs.force_rebuild }}
     secrets: inherit
 
   macos:
@@ -132,14 +141,20 @@ jobs:
       python_filter: ${{ inputs.python_filter }}
       arch_filter: ${{ inputs.arch_filter }}
       audit: ${{ inputs.audit }}
+      publish: ${{ inputs.publish }}
+      force_rebuild: ${{ inputs.force_rebuild }}
     secrets: inherit
 
-  # The ONE release job per coordinator run (the serialization rationale
-  # is the header's). A runner that dies mid-publish never reports, and
-  # the job-level group (cancel-in-progress: false) then holds every
-  # later publish hostage for the cap — bound it.
+  # The ONE release job per coordinator run. Spec 13 §2a's de-rendezvous
+  # moved the publish into the legs (write-once per-leg names — no shared
+  # release-asset mutation remains); what serializes here is the one duty
+  # that needs the whole matrix: the AUDIT (every platform's expected
+  # names verified against the release, read-only). A runner that dies
+  # mid-audit never reports, and the job-level group
+  # (cancel-in-progress: false) then holds every later audit hostage for
+  # the cap — bound it.
   release:
-    name: Publish the runtime packages
+    name: Audit the release
     needs: [windows, linux-gnu, linux-musl, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -158,35 +173,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Every platform's packages land in one workspace; the idempotent
-      # skip keeps unchanged assets from re-uploading, and each platform
-      # invocation writes only its own packages' metadata (sidecars +
-      # shards — issue 139), so platforms never touch a shared file.
-      - name: Download the runtime packages
-        if: ${{ !inputs.audit }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: runtime-packages-*
-          path: runtime-packages
-          merge-multiple: true
-
       - name: Setup Ruby gems
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
         with:
           ruby-version: '3.3'
           bundler-cache: true
 
-      # One upload_release.rb per platform that built, sequential inside
-      # this job. Each platform's completeness gate reads its own matrix.
-      # The finalize pass runs LAST: it derives the monolithic
-      # conveniences (manifest.json / SHA256SUMS.txt) and the release
-      # notes from the release's own shards + asset listing — the one
-      # place the shared files are (re)written, from ground truth only,
-      # never from a job's local knowledge (issue 139).
-      - name: Update the release, per platform
+      # The audit, per platform that built: the legs already published
+      # their packages in-leg, so this job never downloads a byte — it
+      # verifies each platform's expected names (payloads, .sha256
+      # sidecars, shards, and — on signing-enabled lines — every .asc,
+      # spec 09 §5) against the release's own listing, read-only.
+      - name: Audit the release, per platform
         env:
-          AUDIT_ONLY: ${{ inputs.audit }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+          AUDIT_ONLY: "true"
+          TEBAKO_RELEASE_SIGNING_ENABLED: ${{ vars.TEBAKO_RELEASE_SIGNING_ENABLED }}
           WIN_RUN: ${{ needs.windows.outputs.run }}
           WIN_VER: ${{ needs.windows.outputs.tebako_version }}
           WIN_ENV: ${{ needs.windows.outputs.env_matrix }}
@@ -205,34 +206,24 @@ jobs:
           MAC_PYTHON: ${{ needs.macos.outputs.python_matrix }}
         run: |
           set -uo pipefail
-          # Publish every platform that built green; THEN fail loudly naming
-          # any selected platform that did not — a green platform's packages
-          # always land, and a coverage gap never goes unreported.
-          upload_failed=""
-          publish_platform() {
+          # Audit every platform that built green; THEN fail loudly naming
+          # any selected platform that did not — a green platform's audit
+          # always runs, and a coverage gap never goes unreported.
+          audit_failed=""
+          audit_platform() {
             local run="$1" ver="$2" envm="$3" pym="$4" name="$5"
             if [ "$run" != "true" ]; then
-              echo "--- $name did not build this run; skipping its merge"
+              echo "--- $name did not build this run; skipping its audit"
               return 0
             fi
-            echo "=== publishing $name (tebako $ver)"
+            echo "=== auditing $name (tebako $ver)"
             TEBAKO_VERSION="$ver" EXPECTED_ENV_MATRIX="$envm" EXPECTED_PYTHON_MATRIX="$pym" \
-              ./scripts/upload_release.rb || upload_failed="$upload_failed $name"
+              ./scripts/upload_release.rb || audit_failed="$audit_failed $name"
           }
-          publish_platform "$WIN_RUN"  "$WIN_VER"  "$WIN_ENV"  "$WIN_PYTHON"  windows
-          publish_platform "$GNU_RUN"  "$GNU_VER"  "$GNU_ENV"  "$GNU_PYTHON"  linux-gnu
-          publish_platform "$MUSL_RUN" "$MUSL_VER" "$MUSL_ENV" "$MUSL_PYTHON" linux-musl
-          publish_platform "$MAC_RUN"  "$MAC_VER"  "$MAC_ENV"  "$MAC_PYTHON"  macos
-          # The finalize pass (skipped on audit-only runs, which mutate
-          # nothing): one tebako version per coordinator run, so the first
-          # platform that built names it.
-          if [ "${AUDIT_ONLY:-false}" != "true" ]; then
-            FIN_VER="${WIN_VER:-${GNU_VER:-${MUSL_VER:-${MAC_VER:-}}}}"
-            if [ -n "$FIN_VER" ]; then
-              echo "=== finalizing (tebako $FIN_VER)"
-              TEBAKO_VERSION="$FIN_VER" FINALIZE_ONLY=true ./scripts/upload_release.rb || upload_failed="$upload_failed finalize"
-            fi
-          fi
+          audit_platform "$WIN_RUN"  "$WIN_VER"  "$WIN_ENV"  "$WIN_PYTHON"  windows
+          audit_platform "$GNU_RUN"  "$GNU_VER"  "$GNU_ENV"  "$GNU_PYTHON"  linux-gnu
+          audit_platform "$MUSL_RUN" "$MUSL_VER" "$MUSL_ENV" "$MUSL_PYTHON" linux-musl
+          audit_platform "$MAC_RUN"  "$MAC_VER"  "$MAC_ENV"  "$MAC_PYTHON"  macos
           failed=""
           mark() { # $1=selected? $2=result $3=name
             if [ "$1" = "true" ] && [ "$2" != "success" ] && [ "$2" != "skipped" ]; then
@@ -246,28 +237,10 @@ jobs:
           if [ -n "$failed" ]; then
             echo "::error::these platforms were selected but did not build green — their packages did not land:$failed"
           fi
-          if [ -n "$upload_failed" ]; then
-            echo "::error::these platforms' upload_release.rb failed:$upload_failed"
+          if [ -n "$audit_failed" ]; then
+            echo "::error::these platforms' audits FAILED — the release is incomplete:$audit_failed"
           fi
-          [ -z "$failed" ] && [ -z "$upload_failed" ]
-
-      # Spec 09 §2: every runtime package, env image and dll facet, plus
-      # the SHA256SUMS.txt / manifest.json indexes, ships a detached .asc
-      # from the release signing subkey (scripts/sign_release.rb), made by
-      # the latest tamatebako/tebako release's pinned, sha256-verified
-      # tebako-pkg. TEBAKO_RELEASE_SIGNING_ENABLED=true arms the pass;
-      # armed + a missing TEBAKO_RELEASE_SIGNING_KEY secret is a fast
-      # named failure; disarmed ships unsigned (unsigned stays
-      # first-class — spec 09 §3). Runs only when every selected
-      # platform's upload above succeeded — a partial release is never
-      # signed. (tebako-runtime-ruby#154's step, ported.)
-      - name: Sign the release assets (spec 09)
-        if: ${{ !inputs.audit && success() }}
-        env:
-          TEBAKO_VERSION: ${{ needs.windows.outputs.tebako_version || needs.linux-gnu.outputs.tebako_version || needs.linux-musl.outputs.tebako_version || needs.macos.outputs.tebako_version }}
-          TEBAKO_RELEASE_SIGNING_ENABLED: ${{ vars.TEBAKO_RELEASE_SIGNING_ENABLED }}
-          TEBAKO_RELEASE_SIGNING_KEY: ${{ secrets.TEBAKO_RELEASE_SIGNING_KEY }}
-        run: ./scripts/sign_release.rb
+          [ -z "$failed" ] && [ -z "$audit_failed" ]
 
       - name: Ping the versions catalog
         if: ${{ always() && success() }}

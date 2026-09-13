@@ -44,6 +44,15 @@
 #   additionally provisions its build-time-only toolchain
 #   (ci/provision_jit_toolchain.sh in the container, brew llvm@N on
 #   macos) from the leg's jit_llvm plan value.
+# Stage 3 (publish + sign): the leg that built a package publishes it
+#   (scripts/upload_release.rb) and signs its served names
+#   (scripts/sign_release.rb) in the same invocation — spec 13 §2a's
+#   de-rendezvous (tebako-runtime-ruby#161's pattern): write-once
+#   per-leg names, no shared release-asset mutation, so N legs publish
+#   concurrently with zero rendezvous and one failed leg no longer
+#   blocks the green legs' packages. The coordinator (publish.yml)
+#   keeps ONE release job: the read-only audit of the whole matrix
+#   against the release.
 #
 # Container grammar (the ruby factory's): the linux legs run on the
 # ubuntu host and docker-run the tpkg-builder image per step — the musl
@@ -77,6 +86,14 @@ on:
         default: 'all'
       audit:
         description: 'Audit only: compute the legs, build nothing (publish.yml''s audit mode)'
+        type: boolean
+        default: false
+      publish:
+        description: 'Publish each leg''s runtime package to the release and sign its served names (spec 13 §2a / spec 09 §5)'
+        type: boolean
+        default: false
+      force_rebuild:
+        description: 'Re-upload even unchanged assets (reaches upload_release.rb as FORCE_REBUILD)'
         type: boolean
         default: false
     outputs:
@@ -284,8 +301,8 @@ jobs:
           runtime="tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
           bash ci/macos-sign-notarize-runtime.sh "runtime-packages/$runtime"
 
-      # --- the gates (a red gate skips the upload, and the release
-      # job's completeness check then fails the run loudly) -------------
+      # --- the gates (a red gate skips the publish below, and the
+      # release job's audit then fails the run loudly) ------------------
       - name: Check symbol provenance (container legs)
         if: matrix.container != null
         run: |
@@ -354,15 +371,60 @@ jobs:
           export TEBAKO_TFS
           tools/boot_smoke
 
-      # The artifact contract the release job consumes: one artifact per
-      # (platform, arch, python) workspace (tebako-runtime-ruby's
-      # runtime-packages-* pattern; the python component is this
-      # factory's — several pythons share an os/arch slice here).
+      # The leg's workspace, kept for a day as build diagnostics: one
+      # artifact per (platform, arch, python) leg. The publish stage
+      # below reads runtime-packages/ in place — since the de-rendezvous
+      # (spec 13 §2a) nothing downloads this artifact anymore.
       - name: Upload the runtime packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.python }}
           path: runtime-packages
-          # Consumed by the same coordinator run's release job, never
-          # after (the ruby factory's retention rule).
           retention-days: 1
+
+      # Spec 13 §2a (the de-rendezvous, tebako-runtime-ruby#161's
+      # pattern): the leg that built a package publishes it — payload
+      # assets + .sha256 sidecars + the .manifest.json shard, write-once
+      # names this leg owns alone — and then signs every served name in
+      # the same invocation (spec 09 §5's no-fold rule). No shared file
+      # exists, so N legs publish concurrently with zero rendezvous.
+      - name: Setup Ruby for the publish tooling
+        if: ${{ inputs.publish && !inputs.audit }}
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Publish the leg's runtime package (spec 13 §2a)
+        if: ${{ inputs.publish && !inputs.audit }}
+        shell: bash
+        env:
+          # The job-level runner GITHUB_TOKEN authenticates the release
+          # API calls (the tebako-runtime-python#5 deviation — see
+          # publish.yml's header).
+          TEBAKO_VERSION: ${{ needs.compute.outputs.tebako_version }}
+          EXPECTED_ENV_MATRIX: '[{"os":"${{ matrix.os }}","arch":"${{ matrix.arch }}"}]'
+          EXPECTED_PYTHON_MATRIX: '["${{ matrix.python }}"]'
+          FORCE_REBUILD: ${{ inputs.force_rebuild && 'true' || 'false' }}
+          TEBAKO_RELEASE_SIGNING_ENABLED: ${{ vars.TEBAKO_RELEASE_SIGNING_ENABLED }}
+          TEBAKO_RELEASE_SIGNING_KEYID: ${{ vars.TEBAKO_RELEASE_SIGNING_KEYID }}
+        run: |
+          set -euo pipefail
+          # The boot smoke materializes the PE-named libpython DLL copy
+          # (libpython<X.Y>.dll, tools/boot_smoke's materialize_python_dll)
+          # next to the exe — never a release asset (the release ships
+          # the DLL as <runtime>.dll; without this rm the glob below
+          # would read the copy as a package of its own).
+          rm -f runtime-packages/libpython*.dll
+          ./scripts/upload_release.rb
+
+      - name: Sign the leg's release assets (spec 09 §5)
+        if: ${{ inputs.publish && !inputs.audit }}
+        shell: bash
+        env:
+          TEBAKO_VERSION: ${{ needs.compute.outputs.tebako_version }}
+          TEBAKO_PKG_HOST_ID: ${{ matrix.host_id }}
+          TEBAKO_RELEASE_SIGNING_ENABLED: ${{ vars.TEBAKO_RELEASE_SIGNING_ENABLED }}
+          TEBAKO_RELEASE_SIGNING_KEY: ${{ secrets.TEBAKO_RELEASE_SIGNING_KEY }}
+          SIGN_ONLY_STEMS: tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}
+        run: ./scripts/sign_release.rb
