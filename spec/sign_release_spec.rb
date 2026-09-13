@@ -158,9 +158,9 @@ RSpec.describe ReleaseSigner do
     SignSpecAsset.new(id, name, "sha256:#{Digest::SHA256.hexdigest("BYTES-#{name}")}", updated_at, "u/#{name}")
   end
 
-  def signer_for(assets, env: enabled_env, executor: FakeSignExecutor.new)
+  def signer_for(assets, env: enabled_env, executor: FakeSignExecutor.new, tool_assets: nil)
     client = FakeSignClient.new(release: release, assets: assets,
-                                tool_release: tool_release, tool_assets: tool_assets)
+                                tool_release: tool_release, tool_assets: tool_assets || self.tool_assets)
     [ReleaseSigner.new(client: client, executor: executor, env: env), client, executor]
   end
 
@@ -325,7 +325,12 @@ RSpec.describe ReleaseSigner do
   it "names the detected host id when the tool asset is missing (no TEBAKO_PKG_HOST_ID)" do
     new = Time.utc(2026, 9, 9)
     env = enabled_env.except("TEBAKO_PKG_HOST_ID")
-    signer, = signer_for([asset(1, "pkg-a", new)], env: env)
+    # The canned tool listing must PROVABLY lack the detected host: the
+    # default fixture ships the linux-gnu-x86_64 tool, which the linux CI
+    # runner detects — the gate would find its asset and never raise
+    # (platform-dependent spec). Empty listing → the detection names the
+    # runner's own host id in the raise, on every host.
+    signer, = signer_for([asset(1, "pkg-a", new)], env: env, tool_assets: [])
     host_id = TebakoPythonBuilder::Platform.new.host_id
     expect { signer.sign_release }
       .to raise_error(ReleaseSigner::SigningGateError, /no tebako-pkg #{Regexp.escape(host_id)} asset/)
