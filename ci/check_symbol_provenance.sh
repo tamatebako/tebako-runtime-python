@@ -60,8 +60,15 @@ fail() { echo "::error::provenance: $*"; failures=$((failures + 1)); }
 note() { echo "provenance: $*"; }
 
 # capture-then-test everywhere (never nm | grep -q under pipefail: grep's
-# early exit SIGPIPEs nm into a false negative).
+# early exit SIGPIPEs nm into a false negative). An empty capture earns
+# nm's own diagnostic as evidence — a silent nm failure (a path the
+# native tool cannot open, an unreadable file) must not read as
+# "stripped".
 symbols="$(nm "$EXE" 2>/dev/null || true)"
+if [ -z "$symbols" ]; then
+  echo "provenance: nm yielded no symbol table for $EXE; nm's own diagnostic:"
+  nm "$EXE" 2>&1 | head -5 || true
+fi
 
 for sym in tebako_driver_boot tebako_mount_point tebako_driver_contract_version main; do
   line="$(printf '%s\n' "$symbols" | grep -E "[TtWwDd] _?${sym}\$" || true)"
