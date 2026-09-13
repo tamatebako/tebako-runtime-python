@@ -113,8 +113,11 @@ boundary below).
 
 The env image ships the stdlib plus a **declarative site-packages
 whitelist** (`build/site-packages.yml`; v1 keeps `pip` only, with its
-dist-info — pip's `importlib.metadata` self-check reads it). Everything
-else ensurepip installed is pruned at image assembly.
+dist-info — pip's `importlib.metadata` self-check reads it). pip reaches
+the staged site-packages via `make install`'s ensurepip on POSIX and via
+an explicit bundled-wheel placement on msys (the install's `--root`
+rebase drive-strips the build-tree prefix — `PythonBuild#place_pip`).
+Anything else the install staged is pruned at image assembly.
 
 **The pip form is `python3 -m pip`.** The image's `bin/` directory is
 pruned wholesale: the ensurepip console scripts' shebangs spell the
@@ -125,15 +128,19 @@ interpreter by convention.
 
 ## The windows boundary
 
-The v1 windows leg (ucrt64, `--disable-shared`) is the **driver-contract
-surface only**: the exe boots the driver, answers `--tebako-image`/
-`TEBAKO_RUNTIME_IMAGE` with the same named errors, and runs the
-interpreter only when nothing was mounted (bare/dev mode). There is no
-preload tier on windows — with any mount the fs TU exits **69** with a
-named error (roadmap 30 phase 2). The `--disable-shared` choice means no
-libpython DLL facet ships; `scripts/upload_release.rb` already models
-the dll facet opportunistically if a future `--enable-shared` leg
-appears (the ruby factory's issue-40 analog).
+The windows leg (ucrt64, `--enable-shared` — issue 40's answer: on PE a
+loadable module cannot carry undefined symbols, so the extensions link
+`libpython<X.Y>.dll`; the ruby factory ships the same shape) is the
+**driver-contract surface only**: the exe boots the driver, answers
+`--tebako-image`/`TEBAKO_RUNTIME_IMAGE` with the same named errors, and
+runs the interpreter only when nothing was mounted (bare/dev mode).
+There is no preload tier on windows — with any mount the fs TU exits
+**69** with a named error (roadmap 30 phase 2). The shared build ships
+the DLL as a `<package>.dll` release facet (the release manifest's
+`dll.install_as` names the PE spelling the store materializes beside
+the exe), and the mingw support set (libgcc/libwinpthread) is
+statically linked into the runtime's own PE modules — a bare machine
+installs nothing.
 
 ## The artifacts (per version × triplet)
 

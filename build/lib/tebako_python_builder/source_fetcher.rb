@@ -28,13 +28,16 @@
 require "fileutils"
 
 module TebakoPythonBuilder
-  # Download, SHA256-verification and caching of the pristine CPython
-  # source published by tamatebako/python: the release carries one
-  # tfs-python-<version>-src.tar.gz asset per published version plus a
-  # SHA256SUMS manifest (the trust anchor — a checksum mismatch is a hard
-  # error, never a refetch). Zero patches (the source factory's contract),
-  # so there are no per-platform scenario assets (the ruby factory's
-  # scenario_asset_names has no analog here).
+  # Download, SHA256-verification and caching of the CPython source
+  # published by tamatebako/python: the release carries one
+  # tfs-python-<version>-src[-<scenario>].tar.gz asset per published
+  # version per scenario plus a SHA256SUMS manifest (the trust anchor — a
+  # checksum mismatch is a hard error, never a refetch). The linux-gnu
+  # scenario ships unsuffixed for back-compat (the pristine upstream
+  # tree); windows-msys carries the line's msys2/ucrt64 patch series
+  # (tamatebako/python patches/<line>/, TODO.python/05) — the
+  # scenario_asset_names convention mirrors the ruby factory's, minus
+  # its msys two-pass split (CPython needs one tree per scenario).
   class SourceFetcher
     REPO = "tamatebako/python"
 
@@ -48,18 +51,30 @@ module TebakoPythonBuilder
       "tfs-python-#{python_version}-src.tar.gz"
     end
 
-    # Returns [tarball_path, sha256] for the requested python version
-    def fetch(python_version)
-      fetch_asset(asset_name(python_version))
+    # The one scenario asset a platform consumes. linux-gnu (and every
+    # other POSIX host) rides the unsuffixed back-compat asset; a
+    # mingw/ucrt host needs the line's patched windows-msys tree.
+    def self.scenario_asset_name(python_version, platform)
+      base = "tfs-python-#{python_version}-src"
+      platform.msys? ? "#{base}-windows-msys.tar.gz" : "#{base}.tar.gz"
     end
 
-    # The published sha256 of a version's tarball, read from the pinned
-    # release's SHA256SUMS. This is the per-version cache-key input of the
-    # build workflow's .build cache: the key and the download-time
+    # Returns [tarball_path, sha256] for the requested python version.
+    # With a platform, fetches that platform's scenario asset (the
+    # windows-msys tree on a mingw host); without one, the unsuffixed
+    # linux-gnu asset (the historical default).
+    def fetch(python_version, platform: nil)
+      fetch_asset(platform ? self.class.scenario_asset_name(python_version, platform) : asset_name(python_version))
+    end
+
+    # The published sha256 of a version's scenario tarball, read from the
+    # pinned release's SHA256SUMS. This is the per-version cache-key input
+    # of the build workflow's .build cache: the key and the download-time
     # verification in #fetch_asset share the same source of truth, so a
-    # cache restores only trees built from exactly these bytes.
-    def tarball_sha256(python_version)
-      expected_sha256(asset_name(python_version))
+    # cache restores only trees built from exactly these bytes. The
+    # platform keyword selects the scenario exactly as #fetch's does.
+    def tarball_sha256(python_version, platform: nil)
+      expected_sha256(platform ? self.class.scenario_asset_name(python_version, platform) : asset_name(python_version))
     end
 
     # Returns [tarball_path, sha256] for the named release asset

@@ -104,6 +104,10 @@ ARCHES = %w[x86_64 arm64].freeze
 # default; upstream owner: tamatebako/tebako release.yml matrix.platform).
 LINK_UNIT_PID = TebakoPythonBuilder::Platform::LINK_UNIT_PIDS
 
+# A stand-in mingw/ucrt host, used only to ask SourceFetcher for the
+# windows-msys scenario asset name (its grammar branches on #msys?).
+MINGW_PLATFORM = TebakoPythonBuilder::Platform.new("x86_64-w64-mingw32").freeze
+
 def usage_error(message)
   warn "compute_matrix: #{message}"
   exit 64
@@ -122,6 +126,9 @@ python_sets = contract.fetch("python") { usage_error "#{CONTRACT_YML} carries no
 catalog = python_sets.fetch("catalog") { usage_error "#{CONTRACT_YML} python: carries no catalog key" }
 container_version = contract.fetch("container_version") do
   usage_error "#{CONTRACT_YML} carries no container_version pin"
+end
+source_release = contract.fetch("source_release") do
+  usage_error "#{CONTRACT_YML} carries no source_release pin"
 end
 
 python_filter = ENV.fetch("PYTHON_FILTER", "full")
@@ -149,6 +156,29 @@ unless arch_filter == "all" || ARCHES.include?(arch_filter)
 end
 
 env = JSON.parse(File.read(MATRIX_JSON)).fetch("env")
+
+# A windows leg builds only from the line's msys2/ucrt64 scenario tree —
+# upstream CPython has zero mingw support (TODO.python/05), so the leg's
+# source is tfs-python-<base>-src-windows-msys.tar.gz in the pinned
+# source release's SHA256SUMS. Lines whose series has not shipped yet
+# skip windows LOUDLY (their POSIX legs are unaffected). The SHA256SUMS
+# read is lazy and scoped to a windows env row surviving the filters —
+# POSIX-only triggers never fetch.
+windows_sums = nil
+windows_buildable = lambda do |base_version|
+  windows_sums ||= begin
+    TebakoPythonBuilder::SourceFetcher.new(
+      release: source_release,
+      cache_dir: File.join(REPO_ROOT, ".build", "downloads")
+    ).sha256sums
+  rescue TebakoPythonBuilder::Error => e
+    # An unreadable pinned release (a 404 while the pin names a release
+    # that does not exist yet) is a config-class failure — the same
+    # exit-64 discipline as an unknown filter, never a stack trace.
+    usage_error "cannot read the pinned source release's SHA256SUMS: #{e.message}"
+  end
+  windows_sums.key?(TebakoPythonBuilder::SourceFetcher.scenario_asset_name(base_version, MINGW_PLATFORM))
+end
 
 legs = []
 selected_env = []
@@ -179,6 +209,22 @@ env.each do |row|
     # (tamatebako/python), never a per-leg workaround here.
     if line.jit? && os == "linux-musl"
       warn "note: #{python} skipped on linux-musl/#{arch} — CPython's JIT target whitelist rejects *-linux-musl (upstream)"
+      next
+    end
+    # The same whitelist admits only MSVC windows targets
+    # (x86_64-pc-windows-msvc): the ucrt64 leg's x86_64-w64-mingw32 triple
+    # is rejected upstream, so jit lines do not build on windows either.
+    if line.jit? && os == "windows"
+      warn "note: #{python} skipped on windows/#{arch} — CPython's JIT target whitelist admits MSVC windows only (upstream)"
+      next
+    end
+    # A windows leg exists only when the pinned source release ships the
+    # line's msys2/ucrt64 scenario asset (tamatebako/python's
+    # patches/<line>/ series, TODO.python/05). POSIX legs are unaffected.
+    if os == "windows" && !windows_buildable.call(line.base_version)
+      warn "note: #{python} skipped on windows/#{arch} — #{source_release} ships no " \
+           "#{TebakoPythonBuilder::SourceFetcher.scenario_asset_name(line.base_version, MINGW_PLATFORM)} " \
+           "(the line's msys2/ucrt64 series lands in a later tamatebako/python release)"
       next
     end
     legs << {

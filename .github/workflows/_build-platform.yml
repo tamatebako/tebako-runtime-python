@@ -302,14 +302,19 @@ jobs:
           ci/check_symbol_provenance.sh --exe \
             "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
 
+      # The exe name carries .exe on this leg (Platform#exe_suffix) and it
+      # must be spelled out: msys stat() transparency lets foo.exe satisfy
+      # `[ -s foo ]`, but the native nm/objdump open the argument verbatim
+      # — an extensionless spelling is ENOENT to them and reads back as a
+      # stripped exe (run 34758424181's false wall). The ruby factory
+      # spells ruby.exe the same way.
       - name: Check symbol provenance (windows)
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          exe="runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
-          [ -s "$exe" ] || exe="$exe.exe"
-          ci/check_symbol_provenance.sh --exe "$exe"
+          ci/check_symbol_provenance.sh --exe \
+            "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}.exe"
 
       # The boot smoke self-selects the scenario set per platform (the
       # POSIX set vs the windows bare + named-error trio) and resolves the

@@ -110,10 +110,12 @@ module TebakoPythonBuilder
     end
 
     # The runtime's abi facet (the release shard's additive `abi` key):
-    # the build's own EXT_SUFFIX stem (e.g. "cpython-313-x86_64-linux-gnu")
-    # — exactly the string native-extension wheels pin. Read off the BUILT
-    # exe itself (the host is the target: no cross), run bare — dev mode,
-    # no image — so getpath resolves the build tree.
+    # the build's own EXT_SUFFIX stem (e.g. "cpython-313-x86_64-linux-gnu";
+    # the windows-msys shared shape spells it "cp314-mingw_x86_64_ucrt_gnu.pyd"
+    # — the source series' 0014 SOABI/EXT_SUFFIX port) — exactly the string
+    # native-extension wheels pin. Read off the BUILT exe itself (the host
+    # is the target: no cross), run bare — dev mode, no image — so getpath
+    # resolves the build tree.
     def abi
       @abi ||= begin
         env = { "PYTHONHOME" => nil, "PYTHONPATH" => nil }
@@ -126,7 +128,7 @@ module TebakoPythonBuilder
         # which is why only the linux legs saw it). Re-tag, scrub, and
         # keep the EXT_SUFFIX-shaped line — stderr noise never parses.
         text = out.force_encoding(Encoding::UTF_8).scrub
-        line = text.lines.map(&:strip).find { |l| l.match?(/\A\.?cpython-\d+[\w.-]*\z/) }
+        line = text.lines.map(&:strip).find { |l| l.match?(/\A\.?(?:cpython-\d+|cp\d+)[\w.-]*\z/) }
         unless st.exitstatus&.zero? && line
           raise TebakoPythonBuilder::Error.new(
             "the built interpreter did not report its EXT_SUFFIX (#{st}): #{text}", 106
@@ -232,13 +234,18 @@ module TebakoPythonBuilder
     # (sysconfig data and the .pyc source paths then spell the runtime VFS
     # path; PYTHONHOME — set by the fs TU from the driver's effective root
     # — is what actually drives getpath at boot, TODO.python/01's probe).
+    # windows-msys builds --enable-shared: on PE a loadable module cannot
+    # carry undefined symbols, so every stdlib extension links
+    # libpython3.14.dll (the static shape is impossible by construction —
+    # issue 40; the ruby factory ships the same way). POSIX stays static
+    # (the shipped single-exe shape).
     # A jit line adds --enable-experimental-jit (bare = "yes": the JIT is
     # compiled in AND on by default; PYTHON_JIT=0/1 override at runtime,
     # CPython whatsnew 3.13 — selecting the jit line IS opting into it).
     def configure
       args = ["./configure",
               "--prefix=#{@platform.mount_root}",
-              "--disable-shared",
+              @platform.msys? ? "--enable-shared" : "--disable-shared",
               "--with-openssl=#{openssl_prefix}",
               "--with-openssl-rpath=no"]
       args << "--enable-experimental-jit" if @python.jit?
@@ -261,6 +268,15 @@ module TebakoPythonBuilder
     # LDFLAGS=-pthread flows through PY_LDFLAGS into PY_CORE_LDFLAGS, the
     # link side of every rule; the compile side already carries the
     # image's -pthread.
+    # windows-msys: static-link the mingw support set INTO the runtime's
+    # PE modules — libpython3.14.dll otherwise imports
+    # libgcc_s_seh-1.dll + libwinpthread-1.dll, and nothing on a bare
+    # windows machine provides them (the audience rule: a user running a
+    # package installs no toolchain). LIBS lands in the link TAIL of the
+    # exe/DLL rules (after the objects — LDFLAGS sits before them and a
+    # static archive there is discarded as unneeded); configure prepends
+    # its own finds, so this pair stays last. The ruby factory's proven
+    # recipe (its Mlibs::MSYS_DLL_LIBRARIES).
     # Everywhere else the system openssl/zlib are found by the default
     # detection (the containers ship libssl-dev/zlib1g-dev,
     # openssl-dev/zlib-static, pacman openssl).
@@ -273,6 +289,8 @@ module TebakoPythonBuilder
         }
       elsif @platform.linux_gnu?
         { "LDFLAGS" => "-pthread" }
+      elsif @platform.msys?
+        { "LIBS" => "-static-libgcc -l:libwinpthread.a" }
       else
         {}
       end.merge(@jit_env)
@@ -424,8 +442,7 @@ module TebakoPythonBuilder
       substitutions = [
         [%r{^(\$\(BUILDPYTHON\):\s*)Programs/python\.o( \$\(LINK_PYTHON_DEPS\).*)$},
          "\\1Programs/tebako_python.o\\2"],
-        [/^(\t\$\(LINKCC\) \$\(PY_CORE_LDFLAGS\) \$\(LINKFORSHARED\) -o \$@ )Programs\/python\.o( \$\(LINK_PYTHON_OBJS\) \$\(LIBS\) \$\(MODLIBS\) \$\(SYSLIBS\))$/,
-         "\\1Programs/tebako_python.o\\2 $(TEBAKO_LIBS)"],
+        exe_recipe_substitution,
         # libainstall ships the interpreter's main object for embedding:
         # the fs TU rides under the shipped name python.o (the object
         # consumers of LIBPL expect; its content is the driver-linked TU).
@@ -455,10 +472,36 @@ module TebakoPythonBuilder
       puts "   ... Makefile substitutions applied (#{targets.map { |t| File.basename(t) }.join(", ")})"
     end
 
+    # The exe link recipe substitution, platform-shaped. POSIX keeps
+    # upstream's spelling; the windows-msys source series (0039
+    # win_resources_pythonw_msys) rewrites the rule to
+    # `$(LINKFORSHARED) -municode -o $@ Programs/python.o ...
+    # python_exe.o` — the prereq-side regex above still matches (its .*
+    # absorbs python_exe.o), the recipe-side must name the msys spelling
+    # or the driver link is silently lost (the prereq rewrite alone makes
+    # the fs TU compile without ever linking it — verify_substitutions
+    # guards the recipe for exactly this reason). The msys substitution
+    # STRIPS -municode: the fs TU (build/resources/tebako_python_main.c)
+    # defines a plain main — with -municode the mingw CRT demands wmain
+    # and the link dies. python_exe.o (the version/icon resource) stays.
+    # (Unicode argv reaches the driver through the CRT's narrow
+    # conversion, matching the shipped POSIX shape; wide-argv parity is
+    # a recorded follow-up.)
+    def exe_recipe_substitution
+      if @platform.msys?
+        [/^(\t\$\(LINKCC\) \$\(PY_CORE_LDFLAGS\) \$\(LINKFORSHARED\)) -municode( -o \$@ )Programs\/python\.o( \$\(LINK_PYTHON_OBJS\) \$\(LIBS\) \$\(MODLIBS\) \$\(SYSLIBS\)) python_exe\.o$/,
+         "\\1\\2Programs/tebako_python.o\\3 python_exe.o $(TEBAKO_LIBS)"]
+      else
+        [/^(\t\$\(LINKCC\) \$\(PY_CORE_LDFLAGS\) \$\(LINKFORSHARED\) -o \$@ )Programs\/python\.o( \$\(LINK_PYTHON_OBJS\) \$\(LIBS\) \$\(MODLIBS\) \$\(SYSLIBS\))$/,
+         "\\1Programs/tebako_python.o\\2 $(TEBAKO_LIBS)"]
+      end
+    end
+
     def verify_substitutions(durable)
       content = File.read(durable)
       missing = []
       missing << "the $(BUILDPYTHON) rule" unless content.include?("$(BUILDPYTHON):\tPrograms/tebako_python.o")
+      missing << "the $(BUILDPYTHON) link recipe" unless content.include?("-o $@ Programs/tebako_python.o")
       missing << "the libainstall python.o line" unless content.include?("$(INSTALL_DATA) Programs/tebako_python.o")
       # The wasm anchor is version-conditional (absent on 3.14+), so the
       # drift guard is inverted: a SURVIVING un-rewritten binding means the
@@ -488,24 +531,87 @@ module TebakoPythonBuilder
     end
 
     def make
+      # msys: upstream's DLL rule ($(DLLLIBRARY) libpython$(LDVERSION).dll.a
+      # as a two-target rule with -Wl,--out-implib=$@) is parallel-unsafe:
+      # under -j the two per-target invocations interleave and the
+      # import-library write can clobber the DLL (observed locally: the
+      # 39 MB libpython3.14.dll replaced by the 1.2 MB import stub —
+      # serial make self-heals only because the .dll.a target's expansion
+      # runs last). Pre-building the implib target SERIALLY materializes
+      # both files with the correct expansion (the recipe writes both), so
+      # the parallel make finds the rule up-to-date and never re-runs it.
+      if @platform.msys?
+        TebakoPythonBuilder::BuildHelpers.run_with_capture(["make", "#{@python.msys_dll_name}.a"], chdir: src_dir)
+      end
       TebakoPythonBuilder::BuildHelpers.run_with_capture(["make", "-j", ncores.to_s], env: @jit_env, chdir: src_dir)
     rescue TebakoPythonBuilder::Error => e
       raise TebakoPythonBuilder::Error.new("'build_runtime' build step failed: #{e.message}", 104)
     end
 
     # Staged install: `make install DESTDIR=<stage>` lands the prefix tree
-    # at <stage>/<mount root spelling>. ensurepip rides the install (pip
-    # in site-packages — the image's one selected site-package); the
-    # compileall pass writes the stdlib .pyc set the read-only image then
-    # serves (no .pyc writes at run time).
+    # at <stage>/<mount root spelling>; the compileall pass writes the
+    # stdlib .pyc set the read-only image then serves (no .pyc writes at
+    # run time). CPython's install rules spell every destination
+    # $(DESTDIR)$(dir) with no separator, which composes only because a
+    # POSIX prefix starts with a slash. The msys prefix is drive-qualified
+    # ("A:/t") and DESTDIR + "A:/t/..." concatenates into one junk
+    # component — the tree never lands (the failing recipes are mostly
+    # `-`-prefixed, so make exits green over the wreckage) — so the msys
+    # install overrides prefix to the POSIX spelling "/A/t": every install
+    # dir var derives unexpanded from $(prefix) (autoconf convention), so
+    # the override flows through to every rule; recorded .pyc source paths
+    # then spell /A/t/... instead of A:/t/..., a traceback cosmetic.
+    # ensurepip cannot ride the msys install (ENSUREPIP=no): pip's --root
+    # rebase drive-strips the built python's BUILD-TREE prefix, never the
+    # staged one, so pip would land under <stage>/<build-tree path> —
+    # place_pip stages it explicitly instead.
     def install
       @stage_dir = File.join(@prefix, "stage")
       FileUtils.rm_rf(@stage_dir, secure: true)
       FileUtils.mkdir_p(@stage_dir)
-      TebakoPythonBuilder::BuildHelpers.run_with_capture(["make", "install", "DESTDIR=#{stage_dir}"],
-                                                         chdir: src_dir)
+      argv = ["make", "install", "DESTDIR=#{stage_dir}"]
+      # "A:/t" -> "/A/t" (the method comment's prefix override).
+      argv += ["prefix=/#{@platform.mount_root.delete(':')}", "ENSUREPIP=no"] if @platform.msys?
+      TebakoPythonBuilder::BuildHelpers.run_with_capture(argv, chdir: src_dir)
+      place_pip if @platform.msys?
     rescue TebakoPythonBuilder::Error => e
       raise TebakoPythonBuilder::Error.new("'build_runtime' install step failed: #{e.message}", 105)
+    end
+
+    # msys only — the ensurepip replacement (the install comment): the
+    # bundled wheel's own installer run into the staged site-packages,
+    # mirroring ensurepip's -c invocation (the wheel prepended to
+    # sys.path, pip run as __main__) but with --target deciding the
+    # placement — no scheme math, no --root rebase. The build-tree exe
+    # runs bare (dev mode — the abi probe's shape), and the paths ride
+    # argv rather than the -c payload: the msys runtime translates
+    # whole-argument POSIX paths for the native child exe, but a path
+    # embedded in the script text crosses verbatim. --no-compile mirrors
+    # ensurepip: .pyc records written here would spell the stage paths —
+    # dead links in the mounted image — so pip compiles in memory at
+    # run time.
+    def place_pip
+      bundled = Dir.glob(File.join(src_dir, "Lib", "ensurepip", "_bundled", "pip-*-py3-none-any.whl"))
+      unless bundled.one?
+        raise TebakoPythonBuilder::Error.new(
+          "expected exactly one bundled pip wheel under #{src_dir}/Lib/ensurepip/_bundled " \
+          "(found #{bundled.size}) — the wheel is the pip source", 105
+        )
+      end
+
+      target = File.join(staged_prefix_tree, "lib", @python.libdir_name, "site-packages")
+      FileUtils.mkdir_p(target)
+      snippet = "import runpy, sys; wheel, links, target = sys.argv[1:4]; " \
+                "sys.path = [wheel] + sys.path; " \
+                "sys.argv = ['pip', 'install', '--no-cache-dir', '--no-index', " \
+                "'--find-links', links, '--target', target, '--upgrade', '--no-compile', " \
+                "'--disable-pip-version-check', 'pip']; " \
+                "runpy.run_module('pip', run_name='__main__', alter_sys=True)"
+      TebakoPythonBuilder::BuildHelpers.run_with_capture(
+        [exe_path, "-W", "ignore::DeprecationWarning", "-E", "-c", snippet,
+         bundled.first, File.dirname(bundled.first), target],
+        env: { "PYTHONHOME" => nil, "PYTHONPATH" => nil }, chdir: src_dir
+      )
     end
 
     public

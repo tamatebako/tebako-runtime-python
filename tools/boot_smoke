@@ -35,7 +35,11 @@
 #                        stdlib is image-resident (the two-artifact
 #                        model), so the driver warns about the bare
 #                        boot and the interpreter fails on its own
-#                        terms (non-zero exit; every platform)
+#                        terms (non-zero exit + the encodings fatal on
+#                        POSIX; on windows upstream's winreg fallback
+#                        can hand the child a host-registered stdlib,
+#                        so only the driver's warning and getpath's
+#                        platstdlib warning are pinned there)
 #   boot                 TEBAKO_RUNTIME_IMAGE handoff: stdlib imports
 #                        (json/zlib/ssl) off the mounted image, sys.prefix
 #                        == the mount root                       [POSIX]
@@ -265,6 +269,25 @@ rescue TebakoPythonBuilder::Error
   nil
 end
 
+# The msys shared build: the exe's PE imports resolve libpython<X.Y>.dll
+# in the exe's own directory (the OS's application-dir rule — before any
+# driver code runs), but the package dir holds the DLL under the unique
+# package name (<runtime>.dll — two same-ABI legs would collide on the PE
+# name). Materialize the PE-named copy next to the exe BEFORE any
+# scenario boots it, mirroring the store entry the product's install
+# assembles (exe + image + DLL under the manifest's dll.install_as name).
+# A missing package DLL degrades to the OS loader's own error — loud
+# enough at this layer.
+def materialize_python_dll(executable, platform, line)
+  return unless platform.msys? && line
+
+  source = "#{executable.sub(/\.exe\z/, "")}.dll"
+  return unless File.file?(source)
+
+  dest = File.join(File.dirname(executable), line.msys_dll_name)
+  FileUtils.cp(source, dest) unless File.file?(dest)
+end
+
 # The JIT capability probe, per line (the header's jit block): 3.14+
 # answers sys._jit; 3.13 has no sys._jit, so the probe reads the
 # configure-time -D_Py_JIT out of the installed sysconfig. Runs under
@@ -322,18 +345,35 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
       case scenario
       when "bare"
         # The two-artifact model: the exe alone is NOT a dev-mode
-        # interpreter — the stdlib lives in the env image, so a bare
-        # boot can only fail (getpath's compiled-in prefix resolves
-        # empty and the encodings import dies). What this scenario pins
-        # is the DRIVER's half of the contract: it names the bare boot
-        # on stderr, then the interpreter fails on its own terms.
+        # interpreter — the stdlib lives in the env image. What this
+        # scenario pins on every platform is the DRIVER's half of the
+        # contract: it names the bare boot on stderr.
         out, err, st = boot(executable, ["-c", "print('unreached')"], {})
-        check("bare: non-zero exit (the stdlib is image-resident)",
-              !st.nil? && !st.exitstatus&.zero?, "stdout: #{out}\nstderr: #{err}")
         check("bare: the driver names the bare boot",
               err.include?("TEBAKO_RUNTIME_IMAGE is not set"), "stderr: #{err}")
-        check("bare: the interpreter ran and died on the missing stdlib",
-              err.include?("encodings"), "stderr: #{err}")
+        if platform.msys?
+          # Windows startup is environment-dependent by upstream design:
+          # Modules/getpath.py ("os_name == 'nt' and use_environment and
+          # winreg") appends the HKCU/HKLM SOFTWARE\Python\PythonCore\<ver>\
+          # PythonPath registry values to sys.path, so on a host with a
+          # REGISTERED python (the GHA runner ships one) the child finds a
+          # stdlib, imports encodings, and RUNS the -c program — observed on
+          # the 0dc372c windows leg (run 34760958198): exit 0, 'unreached'
+          # printed. On a registry-clean host it dies with the encodings
+          # fatal like POSIX. Exit status and the encodings message are
+          # therefore not assertable here; the deterministic upstream
+          # surface is getpath's platstdlib warning (the prefix fell back
+          # to the baked-in mount root, which never exists on the runner).
+          check("bare: getpath names the missing platstdlib",
+                err.include?("Could not find platform independent libraries"), "stderr: #{err}")
+        else
+          # POSIX: no registry fallback — getpath's compiled-in prefix
+          # resolves empty and the encodings import dies at Py_Initialize.
+          check("bare: non-zero exit (the stdlib is image-resident)",
+                !st.nil? && !st.exitstatus&.zero?, "stdout: #{out}\nstderr: #{err}")
+          check("bare: the interpreter ran and died on the missing stdlib",
+                err.include?("encodings"), "stderr: #{err}")
+        end
       when "boot"
         unless File.file?(image)
           check("boot", false, "no sibling env image #{image}")
@@ -402,6 +442,7 @@ executable = resolve_executable(options[:runtime_root], options[:exe])
 puts "-- Boot smoke: #{executable} (#{platform.host_id})"
 selected = selected_scenarios(platform, options[:scenario])
 line = expected_line(executable, platform)
+materialize_python_dll(executable, platform, line)
 if selected.include?("jit") && line.nil?
   # The jit assertion needs the declared line; an --exe path outside the
   # runtime-name grammar (a dev build) can't carry one. An explicit ask

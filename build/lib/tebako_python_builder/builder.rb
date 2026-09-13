@@ -63,11 +63,13 @@ module TebakoPythonBuilder
     end
 
     def run # rubocop:disable Metrics/MethodLength
-      # A flavored line (x.y.z-jit) consumes the SAME pristine source
-      # tarball as its base — the flavor is a configure-time ability of
-      # the line, never a second source artifact (the source factory's
-      # SHA256SUMS names base versions only).
-      (tarball, sha256) = fetcher.fetch(@python.base_version)
+      # A flavored line (x.y.z-jit) consumes the SAME source tarball as its
+      # base — the flavor is a configure-time ability of the line, never a
+      # second source artifact (the source factory's SHA256SUMS names base
+      # versions only). The platform selects the scenario: a mingw/ucrt
+      # host builds from the line's patched windows-msys tree, every POSIX
+      # host from the unsuffixed pristine one.
+      (tarball, sha256) = fetcher.fetch(@python.base_version, platform: @platform)
       puts "-- Building tebako runtime for python #{@python_version} " \
            "(tebako #{@tebako_version}, #{@platform.host_id}, #{File.basename(tarball)})"
       link_unit_dir = link_unit.stage(File.join(@prefix, "link-unit"))
@@ -129,6 +131,32 @@ module TebakoPythonBuilder
       FileUtils.mkdir_p(File.dirname(output))
       FileUtils.cp(built_exe, output)
       FileUtils.chmod(0o755, output)
+      stage_python_dll(built_exe) if @platform.msys?
+    end
+
+    # msys only (the --enable-shared shape): stage the just-linked
+    # libpython<X.Y>.dll next to the runtime executable under the
+    # PACKAGE's name (<runtime>.dll — unique per leg: two same-ABI legs
+    # share the PE name and would collide in the merged release
+    # workspace; the manifest's dll.install_as flows the PE name to the
+    # store entry, and tools/boot_smoke materializes it in-leg). The DLL
+    # links next to the exe in the build tree (the Makefile's
+    # $(DLLLIBRARY) rule); its absence means the build regressed to a
+    # static shape — a named error, never a silent skip. The name's
+    # single owner is PythonVersion#msys_dll_name (invariant 10).
+    def stage_python_dll(built_exe)
+      dll = File.join(File.dirname(built_exe), @python.msys_dll_name)
+      unless File.file?(dll)
+        raise TebakoPythonBuilder::Error.new(
+          "expected the shared build's #{@python.msys_dll_name} next to #{built_exe} " \
+          "(the windows-msys leg must configure --enable-shared — issue 40)", 130
+        )
+      end
+
+      dest = "#{output.sub(/\.exe\z/, "")}.dll"
+      FileUtils.cp(dll, dest)
+      FileUtils.chmod(0o755, dest)
+      puts "-- Runtime DLL: #{dest} (installs as #{@python.msys_dll_name})"
     end
 
     def assemble_and_pack_image(build, sha256, link_unit, link_unit_dir, tfs)
