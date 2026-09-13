@@ -105,13 +105,20 @@ link_unit_release: "v2.3.2"
 # first --enable-shared leg hit (trp run 34748169561: KeyError 'LIBPL'
 # — upstream's nt path never merges the Makefile-parsed
 # build_time_vars); 0034's hunk 3 returns to MSYS2-verbatim context.
+# v0.3.5 carries the module-libs cluster (tamatebako/python#20): 0061 +
+# 0073 (_multiprocessing: the win32 enable condition, then -lws2_32),
+# 0074 (select: _MSC_VER → MS_WIN32 guards + -lws2_32), and 0076
+# (_ctypes: -lole32 -loleaut32 -luuid) — the shared-extension link
+# wall the v0.3.4 leg hit (trp run 34750005177: __WSAFDIsSet/
+# __imp_select/__imp_WSAGetLastError; PE resolves every symbol at link
+# time and upstream's PY_STDLIB_MOD stanzas carry no per-module libs).
 # v0.2.0 (2026-09-05) added
 # 3.11.16; the v0.1.0 set (3.12.14, 3.13.15, 3.14.7) carried forward
 # sha256-verified. A build leg fails closed while this is empty.
-source_release: "v0.3.4"
+source_release: "v0.3.5"
 
 # The python version catalog this factory builds and publishes. Mirrors
-# tamatebako/python's versions.yml at source release v0.3.4 (3.11.16,
+# tamatebako/python's versions.yml at source release v0.3.5 (3.11.16,
 # 3.12.14, 3.13.15, 3.14.7). The source factory owns the
 # version PINS (url/sha256/line); this catalog selects which published
 # versions the matrix grammar expands over — the same split as
