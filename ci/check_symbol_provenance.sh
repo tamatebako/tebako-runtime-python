@@ -86,14 +86,22 @@ done
 # objdump that cannot honor --disassemble=<sym> yields no body and the
 # llvm-objdump spelling is tried next; neither producing the body is a
 # failure — never a silently skipped provenance check.
+#
+# The greps below are capture-then-test for the same reason the nm side
+# is: grep -q exits on its first match, the still-writing printf dies of
+# SIGPIPE, and pipefail reads the pipeline as 141 — a false "not found".
+# A binutils PE objdump's --disassemble=<sym> span runs from the symbol
+# to the next data island (thousands of lines — past the pipe buffer),
+# so the windows leg hit exactly that (run 34759975017: main's body DOES
+# call tebako_driver_boot, printed in the failure's own evidence).
 dis=""
 if command -v objdump >/dev/null 2>&1; then
   dis="$(objdump -d --disassemble=main "$EXE" 2>/dev/null || true)"
 fi
-if ! printf '%s\n' "$dis" | grep -q 'main>:' && command -v llvm-objdump >/dev/null 2>&1; then
+if [ -z "$(printf '%s\n' "$dis" | grep 'main>:' || true)" ] && command -v llvm-objdump >/dev/null 2>&1; then
   dis="$(llvm-objdump -d --disassemble-symbols=main "$EXE" 2>/dev/null || true)"
 fi
-if ! printf '%s\n' "$dis" | grep -q 'main>:' && command -v otool >/dev/null 2>&1; then
+if [ -z "$(printf '%s\n' "$dis" | grep 'main>:' || true)" ] && command -v otool >/dev/null 2>&1; then
   # darwin last resort: /usr/bin/objdump is a deprecation shim and
   # llvm-objdump sits behind xcrun (off PATH) — otool (cctools) is
   # always there. Mach-O labels are bare `_symbol:` lines; take the body
@@ -102,7 +110,7 @@ if ! printf '%s\n' "$dis" | grep -q 'main>:' && command -v otool >/dev/null 2>&1
 fi
 if [ -z "$dis" ]; then
   fail "no objdump could disassemble main in $EXE — the forwarding check cannot run"
-elif printf '%s\n' "$dis" | grep -q tebako_driver_boot; then
+elif [ -n "$(printf '%s\n' "$dis" | grep tebako_driver_boot || true)" ]; then
   note "main forwards to tebako_driver_boot (the fs TU is the entry point)"
 else
   fail "main in $EXE does not reference tebako_driver_boot — CPython's own main, not the fs TU (the Makefile substitution never landed)"
