@@ -113,8 +113,11 @@ boundary below).
 
 The env image ships the stdlib plus a **declarative site-packages
 whitelist** (`build/site-packages.yml`; v1 keeps `pip` only, with its
-dist-info — pip's `importlib.metadata` self-check reads it). Everything
-else ensurepip installed is pruned at image assembly.
+dist-info — pip's `importlib.metadata` self-check reads it). pip reaches
+the staged site-packages via `make install`'s ensurepip on POSIX and via
+an explicit bundled-wheel placement on msys (the install's `--root`
+rebase drive-strips the build-tree prefix — `PythonBuild#place_pip`).
+Anything else the install staged is pruned at image assembly.
 
 **The pip form is `python3 -m pip`.** The image's `bin/` directory is
 pruned wholesale: the ensurepip console scripts' shebangs spell the

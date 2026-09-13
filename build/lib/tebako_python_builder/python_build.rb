@@ -549,18 +549,69 @@ module TebakoPythonBuilder
     end
 
     # Staged install: `make install DESTDIR=<stage>` lands the prefix tree
-    # at <stage>/<mount root spelling>. ensurepip rides the install (pip
-    # in site-packages — the image's one selected site-package); the
-    # compileall pass writes the stdlib .pyc set the read-only image then
-    # serves (no .pyc writes at run time).
+    # at <stage>/<mount root spelling>; the compileall pass writes the
+    # stdlib .pyc set the read-only image then serves (no .pyc writes at
+    # run time). CPython's install rules spell every destination
+    # $(DESTDIR)$(dir) with no separator, which composes only because a
+    # POSIX prefix starts with a slash. The msys prefix is drive-qualified
+    # ("A:/t") and DESTDIR + "A:/t/..." concatenates into one junk
+    # component — the tree never lands (the failing recipes are mostly
+    # `-`-prefixed, so make exits green over the wreckage) — so the msys
+    # install overrides prefix to the POSIX spelling "/A/t": every install
+    # dir var derives unexpanded from $(prefix) (autoconf convention), so
+    # the override flows through to every rule; recorded .pyc source paths
+    # then spell /A/t/... instead of A:/t/..., a traceback cosmetic.
+    # ensurepip cannot ride the msys install (ENSUREPIP=no): pip's --root
+    # rebase drive-strips the built python's BUILD-TREE prefix, never the
+    # staged one, so pip would land under <stage>/<build-tree path> —
+    # place_pip stages it explicitly instead.
     def install
       @stage_dir = File.join(@prefix, "stage")
       FileUtils.rm_rf(@stage_dir, secure: true)
       FileUtils.mkdir_p(@stage_dir)
-      TebakoPythonBuilder::BuildHelpers.run_with_capture(["make", "install", "DESTDIR=#{stage_dir}"],
-                                                         chdir: src_dir)
+      argv = ["make", "install", "DESTDIR=#{stage_dir}"]
+      # "A:/t" -> "/A/t" (the method comment's prefix override).
+      argv += ["prefix=/#{@platform.mount_root.delete(':')}", "ENSUREPIP=no"] if @platform.msys?
+      TebakoPythonBuilder::BuildHelpers.run_with_capture(argv, chdir: src_dir)
+      place_pip if @platform.msys?
     rescue TebakoPythonBuilder::Error => e
       raise TebakoPythonBuilder::Error.new("'build_runtime' install step failed: #{e.message}", 105)
+    end
+
+    # msys only — the ensurepip replacement (the install comment): the
+    # bundled wheel's own installer run into the staged site-packages,
+    # mirroring ensurepip's -c invocation (the wheel prepended to
+    # sys.path, pip run as __main__) but with --target deciding the
+    # placement — no scheme math, no --root rebase. The build-tree exe
+    # runs bare (dev mode — the abi probe's shape), and the paths ride
+    # argv rather than the -c payload: the msys runtime translates
+    # whole-argument POSIX paths for the native child exe, but a path
+    # embedded in the script text crosses verbatim. --no-compile mirrors
+    # ensurepip: .pyc records written here would spell the stage paths —
+    # dead links in the mounted image — so pip compiles in memory at
+    # run time.
+    def place_pip
+      bundled = Dir.glob(File.join(src_dir, "Lib", "ensurepip", "_bundled", "pip-*-py3-none-any.whl"))
+      unless bundled.one?
+        raise TebakoPythonBuilder::Error.new(
+          "expected exactly one bundled pip wheel under #{src_dir}/Lib/ensurepip/_bundled " \
+          "(found #{bundled.size}) — the wheel is the pip source", 105
+        )
+      end
+
+      target = File.join(staged_prefix_tree, "lib", @python.libdir_name, "site-packages")
+      FileUtils.mkdir_p(target)
+      snippet = "import runpy, sys; wheel, links, target = sys.argv[1:4]; " \
+                "sys.path = [wheel] + sys.path; " \
+                "sys.argv = ['pip', 'install', '--no-cache-dir', '--no-index', " \
+                "'--find-links', links, '--target', target, '--upgrade', '--no-compile', " \
+                "'--disable-pip-version-check', 'pip']; " \
+                "runpy.run_module('pip', run_name='__main__', alter_sys=True)"
+      TebakoPythonBuilder::BuildHelpers.run_with_capture(
+        [exe_path, "-W", "ignore::DeprecationWarning", "-E", "-c", snippet,
+         bundled.first, File.dirname(bundled.first), target],
+        env: { "PYTHONHOME" => nil, "PYTHONPATH" => nil }, chdir: src_dir
+      )
     end
 
     public
