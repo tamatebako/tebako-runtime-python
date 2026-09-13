@@ -32,11 +32,10 @@
 # grammar), sliced by the dispatch filters. Emits a GitHub Actions matrix
 # JSON document on stdout. Stdlib only.
 #
-# This is the SKELETON planner (TODO.python/02 bootstrap): it expands the
-# full cross product under the filters. The ruby factory's planner also
-# walks a build-graph.yaml so a leg runs only when something it READS
-# changed — that diff-awareness arrives with the real build logic, when
-# there are legs worth skipping.
+# This planner expands the full cross product under the filters. The
+# ruby factory's planner also walks a build-graph.yaml so a leg runs
+# only when something it READS changed — that diff-awareness is a
+# follow-up.
 #
 # Usage: compute_matrix.rb [--format matrix|env|pythons]
 #   matrix  (default) the GHA matrix document {"include": [leg, ...]} —
@@ -158,7 +157,7 @@ end
 env = JSON.parse(File.read(MATRIX_JSON)).fetch("env")
 
 # A windows leg builds only from the line's msys2/ucrt64 scenario tree —
-# upstream CPython has zero mingw support (TODO.python/05), so the leg's
+# upstream CPython has zero mingw support, so the leg's
 # source is tfs-python-<base>-src-windows-msys.tar.gz in the pinned
 # source release's SHA256SUMS. Lines whose series has not shipped yet
 # skip windows LOUDLY (their POSIX legs are unaffected). The SHA256SUMS
@@ -220,7 +219,7 @@ env.each do |row|
     end
     # A windows leg exists only when the pinned source release ships the
     # line's msys2/ucrt64 scenario asset (tamatebako/python's
-    # patches/<line>/ series, TODO.python/05). POSIX legs are unaffected.
+    # patches/<line>/ series). POSIX legs are unaffected.
     if os == "windows" && !windows_buildable.call(line.base_version)
       warn "note: #{python} skipped on windows/#{arch} — #{source_release} ships no " \
            "#{TebakoPythonBuilder::SourceFetcher.scenario_asset_name(line.base_version, MINGW_PLATFORM)} " \

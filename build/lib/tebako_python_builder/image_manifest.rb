@@ -101,8 +101,8 @@ module TebakoPythonBuilder
     # kind=runtime PROVIDES (spec 03 §2.2): the engine line the dispatcher
     # matches runtime_requirements against, the source provenance, and the
     # locked runtime capability triple. abi_line is the python major.minor
-    # (the "3.13" line; the EXT-SUFFIX ABI grammar is TODO.python/04's,
-    # surfaced meanwhile by the release shard's additive `abi` facet).
+    # (the "3.13" line; the exact EXT-SUFFIX stem rides the release
+    # shard's additive `abi` facet).
     # implementation + language_version are the spec 28 §8 axis:
     # `implementation` is REQUIRED for kind: runtime (the spawn edge's
     # filter) and cpython is the python implementation of record.

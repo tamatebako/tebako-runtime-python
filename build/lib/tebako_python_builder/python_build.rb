@@ -233,7 +233,7 @@ module TebakoPythonBuilder
     # The relocatable configure: the compiled-in prefix IS the mount root
     # (sysconfig data and the .pyc source paths then spell the runtime VFS
     # path; PYTHONHOME — set by the fs TU from the driver's effective root
-    # — is what actually drives getpath at boot, TODO.python/01's probe).
+    # — is what actually drives getpath at boot).
     # windows-msys builds --enable-shared: on PE a loadable module cannot
     # carry undefined symbols, so every stdlib extension links
     # libpython3.14.dll (the static shape is impossible by construction —

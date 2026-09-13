@@ -30,8 +30,8 @@
 # the single source of truth for which published CPython versions this
 # factory builds, and which tamatebako/python + tamatebako/tebako releases
 # the legs consume. Stdlib only. (The ruby factory keeps its version sets
-# in .github/matrix.json; TODO.python/02 keeps the python catalog in
-# contract.yml next to the pins.)
+# in .github/matrix.json; the python catalog lives in contract.yml next
+# to the pins.)
 #
 # Usage:
 #   scripts/versions                     # the catalog, as a JSON array

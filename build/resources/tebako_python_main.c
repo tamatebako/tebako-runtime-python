@@ -32,7 +32,7 @@
  * malformed -> 65 (driver-validated pre-mount); ungranted override -> 78
  * (the layout pair check); a mounted image with no preload_shim grant ->
  * 78 (below: the interpreter would boot blind); windows with any mount ->
- * 69 (no preload tier there — roadmap 30 phase 2).
+ * 69 (no preload tier there).
  */
 
 /* glibc AND musl under -std=c11 (strict ANSI — CPython's default cflags,
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
     if (getenv("TEBAKO_TFS_MOUNTS") != NULL) {
         fputs("tebako-python: the runtime mounted its filesystem image, but the windows "
-              "visibility tier is not implemented (roadmap 30 phase 2) — the interpreter "
+              "visibility tier is not implemented — the interpreter "
               "cannot read the mounted tree\n", stderr);
         return 69;
     }

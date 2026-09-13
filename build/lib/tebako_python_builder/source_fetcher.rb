@@ -35,7 +35,7 @@ module TebakoPythonBuilder
   # checksum mismatch is a hard error, never a refetch). The linux-gnu
   # scenario ships unsuffixed for back-compat (the pristine upstream
   # tree); windows-msys carries the line's msys2/ucrt64 patch series
-  # (tamatebako/python patches/<line>/, TODO.python/05) — the
+  # (tamatebako/python patches/<line>/) — the
   # scenario_asset_names convention mirrors the ruby factory's, minus
   # its msys two-pass split (CPython needs one tree per scenario).
   class SourceFetcher

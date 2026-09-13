@@ -216,7 +216,7 @@ jobs:
       # openssl/zlib dev packages (the msys-runtime openssl/zlib would
       # mismatch the ucrt64 target), plus make and the msys ruby the
       # build tooling runs on. The set settles with the first windows
-      # leg run (TODO.python/02's risk leg).
+      # leg run.
       - name: Install pacman packages
         if: matrix.os == 'windows'
         shell: msys2 {0}

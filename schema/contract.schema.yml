@@ -1,6 +1,6 @@
 # JSON Schema (draft 2020-12) for contract.yml — the bootstrap <-> runtime
 # contract version, the tebako link-unit / source-release / container pins,
-# and the python version catalog (TODO.python/02). Modeled on
+# and the python version catalog. Modeled on
 # tebako-runtime-ruby's schema/contract.schema.yml.
 $schema: "https://json-schema.org/draft/2020-12/schema"
 title: tebako-runtime-python bootstrap <-> runtime contract

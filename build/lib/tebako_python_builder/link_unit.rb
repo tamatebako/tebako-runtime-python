@@ -104,8 +104,8 @@ module TebakoPythonBuilder
       libs + Dir.glob(File.join(dir, "closure", "*.a")).sort
     end
 
-    # The preload shim's staged path (POSIX only; nil on windows — the
-    # preload tier is roadmap 30 phase 2 there).
+    # The preload shim's staged path (POSIX only; nil on windows — no
+    # preload tier there).
     def preload_shim_path(dir)
       name = preload_shim_name
       name && File.join(dir, name)
