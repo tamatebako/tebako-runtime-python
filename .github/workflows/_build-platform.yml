@@ -428,3 +428,31 @@ jobs:
           TEBAKO_RELEASE_SIGNING_KEY: ${{ secrets.TEBAKO_RELEASE_SIGNING_KEY }}
           SIGN_ONLY_STEMS: tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}
         run: ./scripts/sign_release.rb
+
+  # The terminal aggregate — and the branch-protection gate. The build
+  # legs are a dynamic matrix whose check names shift with the catalog
+  # (a version bump renames every leg), so protection pins this job's
+  # stable per-platform check name ("<platform> / all legs green")
+  # instead of any leg's. Green means: the contract/matrix computed and
+  # every emitted leg succeeded; a platform whose filter emits no legs
+  # gates on compute alone. Audit runs (publish.yml's audit mode) build
+  # nothing and skip this job.
+  verify:
+    name: all legs green
+    needs: [compute, build]
+    if: ${{ always() && !cancelled() && !inputs.audit }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on the legs
+        run: |
+          set -euo pipefail
+          echo "compute: ${{ needs.compute.result }} (run=${{ needs.compute.outputs.run }}, legs=${{ needs.compute.outputs.leg_count }})"
+          echo "build:   ${{ needs.build.result }}"
+          if [ "${{ needs.compute.result }}" != "success" ]; then
+            echo "::error::the contract/matrix computation failed"
+            exit 1
+          fi
+          if [ "${{ needs.compute.outputs.run }}" = "true" ] && [ "${{ needs.build.result }}" != "success" ]; then
+            echo "::error::not every ${{ inputs.platform }} leg succeeded: ${{ needs.build.result }}"
+            exit 1
+          fi
