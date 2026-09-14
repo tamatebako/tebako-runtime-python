@@ -13,11 +13,10 @@ name: bump-source-pin
 # The PAT (TEBAKO_CI_PAT_TOKEN, the same secret the other tamatebako repos
 # use for cross-repo work) is used for the push and PR creation so the
 # pull_request event actually triggers CI; a PR created with the default
-# GITHUB_TOKEN would not. GITHUB_TOKEN is the fallback. NOTE: the org
-# PAT's fine-grained repository selection predates this repo and 404s
-# every API call from here (tebako-runtime-python#5 — owner action); the
-# PAT's repo selection must cover this repo before this receiver can do
-# its job.
+# GITHUB_TOKEN would not. GITHUB_TOKEN is the fallback. The PAT's
+# repository selection covers this repo (tebako-runtime-python#5, closed)
+# — a workflow_dispatch no-op dry run against the current pin proves the
+# auth path end to end.
 
 on:
   repository_dispatch:
