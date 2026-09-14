@@ -55,10 +55,10 @@
 #     audit mutates only this repo's own release, the runner token's
 #     contents:write suffices, and no downstream cascade listens to this
 #     factory's releases yet. (The PAT's repository selection covers this
-#     repo — the bump-source-pin.yml receiver rides it.)
-#   - No registry render/PR step in the release job: this factory has no
-#     tpkg-registry.yaml mirror yet (the ruby coordinator's second
-#     release-job duty); when the mirror arrives the step ports with it.
+#     repo — the bump-source-pin.yml receiver rides it.) The registry bot
+#     PR is the exception: pushing its branch + opening/auto-merging the
+#     PR rides the PAT grammar like ruby's (the runner token's PRs trigger
+#     no checks, and main is protected).
 name: publish
 
 on:
@@ -91,6 +91,8 @@ on:
 
 permissions:
   contents: write
+  # The release job's registry bot PR (tebako-runtime-ruby's grammar).
+  pull-requests: write
 
 jobs:
   windows:
@@ -143,14 +145,16 @@ jobs:
 
   # The ONE release job per coordinator run. Spec 13 §2a's de-rendezvous
   # moved the publish into the legs (write-once per-leg names — no shared
-  # release-asset mutation remains); what serializes here is the one duty
-  # that needs the whole matrix: the AUDIT (every platform's expected
-  # names verified against the release, read-only). A runner that dies
+  # release-asset mutation remains); what serializes here is the two
+  # duties that need the whole matrix: the AUDIT (every platform's
+  # expected names verified against the release, read-only) and the
+  # registry render + bot PR (git arbitrates the PR — the concurrency
+  # group is politeness now, not correctness). A runner that dies
   # mid-audit never reports, and the job-level group
   # (cancel-in-progress: false) then holds every later audit hostage for
   # the cap — bound it.
   release:
-    name: Audit the release
+    name: Audit the release + publish the registry
     needs: [windows, linux-gnu, linux-musl, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -168,6 +172,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The registry bot PR pushes the publish branch — that needs the
+          # PAT, not the runner's default token (see the header note).
+          token: ${{ secrets.TEBAKO_CI_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
       - name: Setup Ruby gems
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
@@ -237,6 +246,55 @@ jobs:
             echo "::error::these platforms' audits FAILED — the release is incomplete:$audit_failed"
           fi
           [ -z "$failed" ] && [ -z "$audit_failed" ]
+
+      # The registry mirror (spec 04 §2): rendered from the release's own
+      # shards — the write-once per-leg metadata units, ground truth —
+      # never from a job's local knowledge. One tebako version per
+      # coordinator run, so the first platform that built names it.
+      - name: Render the registry entries
+        if: ${{ !inputs.audit }}
+        env:
+          TEBAKO_VERSION: ${{ needs.windows.outputs.tebako_version || needs.linux-gnu.outputs.tebako_version || needs.linux-musl.outputs.tebako_version || needs.macos.outputs.tebako_version }}
+        run: ./tools/registry_update.rb
+
+      # main is branch-protected: the registry lands by bot PR +
+      # auto-merge, never by direct push. Idempotent across re-runs of the
+      # same version (an unchanged registry exits before the branch).
+      - name: Publish the registry via pull request
+        if: ${{ !inputs.audit }}
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TEBAKO_VERSION: ${{ needs.windows.outputs.tebako_version || needs.linux-gnu.outputs.tebako_version || needs.linux-musl.outputs.tebako_version || needs.macos.outputs.tebako_version }}
+        run: |
+          set -euo pipefail
+          cp tpkg-registry.yaml "$RUNNER_TEMP/registry.yaml"
+          git config user.name "tebako-ci"
+          git config user.email "tebako@ribose.com"
+          git fetch origin main
+          branch="publish/v${TEBAKO_VERSION}-registry"
+          git checkout -b "$branch" origin/main
+          cp "$RUNNER_TEMP/registry.yaml" tpkg-registry.yaml
+          if git diff --quiet origin/main -- tpkg-registry.yaml; then
+            echo "registry unchanged (or the entries already landed on main)"
+            exit 0
+          fi
+          git add tpkg-registry.yaml
+          git commit -m "publish v${TEBAKO_VERSION}: registry entries"
+          # force-with-lease on the bot branch: a re-publish re-creates it.
+          git push --force-with-lease origin "$branch"
+          if ! gh pr view "$branch" >/dev/null 2>&1; then
+            body="$RUNNER_TEMP/registry-pr-body.md"
+            cat > "$body" <<EOF
+          Automated registry entries for v${TEBAKO_VERSION} — rendered from the
+          release's per-package .manifest.json shards by tools/registry_update.rb
+          (spec 13 §2a's release job; spec 04 §2's mirror). main is protected,
+          so the registry lands by PR.
+          EOF
+            gh pr create --base main --head "$branch" \
+              --title "publish v${TEBAKO_VERSION}: registry entries" \
+              --body-file "$body"
+          fi
+          gh pr merge --auto --squash "$branch" || gh pr merge --squash "$branch"
 
       - name: Ping the versions catalog
         if: ${{ always() && success() }}

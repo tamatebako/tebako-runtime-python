@@ -28,7 +28,10 @@ package (`scripts/upload_release.rb`) and OpenPGP-signs its served
 names (`scripts/sign_release.rb`) in-leg — the spec 13 §2a
 de-rendezvous, tebako-runtime-ruby#161's pattern — behind the
 `TEBAKO_RELEASE_SIGNING_ENABLED` house gate, and the coordinator's one
-release job audits the whole matrix against the release, read-only.
+release job audits the whole matrix against the release (read-only) and
+renders the `tpkg-registry.yaml` mirror (`tools/registry_update.rb` —
+shard-derived, additive, withdrawal-preserving, composite
+`<python>-<tebako>` version keys), landed on main by bot PR.
 The matrix is green end to end, the windows-ucrt64 leg
 included.
 
