@@ -232,6 +232,12 @@ env.each do |row|
       arch: arch,
       host: row.fetch("host"),
       host_id: host_id,
+      # The in-leg sign step's tebako-pkg must EXECUTE on the leg's
+      # runner, and musl legs build inside the alpine container on a
+      # glibc ubuntu host: a musl-linked tool cannot exec there (its ELF
+      # interpreter is absent — execve answers ENOENT). The tool's
+      # platform is the runner's, never the artifact's.
+      sign_tool_host_id: (os == "linux-musl" ? "linux-gnu-#{arch}" : host_id),
       jit_llvm: line.jit? ? line.jit_llvm_major.to_s : "",
       container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])

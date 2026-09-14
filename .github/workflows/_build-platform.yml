@@ -423,7 +423,7 @@ jobs:
         shell: bash
         env:
           TEBAKO_VERSION: ${{ needs.compute.outputs.tebako_version }}
-          TEBAKO_PKG_HOST_ID: ${{ matrix.host_id }}
+          TEBAKO_PKG_HOST_ID: ${{ matrix.sign_tool_host_id }}
           TEBAKO_RELEASE_SIGNING_ENABLED: ${{ vars.TEBAKO_RELEASE_SIGNING_ENABLED }}
           TEBAKO_RELEASE_SIGNING_KEY: ${{ secrets.TEBAKO_RELEASE_SIGNING_KEY }}
           SIGN_ONLY_STEMS: tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}
