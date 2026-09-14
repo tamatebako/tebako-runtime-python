@@ -400,8 +400,8 @@ jobs:
         shell: bash
         env:
           # The job-level runner GITHUB_TOKEN authenticates the release
-          # API calls (the tebako-runtime-python#5 deviation — see
-          # publish.yml's header).
+          # API calls (the audit mutates only this repo's own release —
+          # see publish.yml's header).
           TEBAKO_VERSION: ${{ needs.compute.outputs.tebako_version }}
           EXPECTED_ENV_MATRIX: '[{"os":"${{ matrix.os }}","arch":"${{ matrix.arch }}"}]'
           EXPECTED_PYTHON_MATRIX: '["${{ matrix.python }}"]'

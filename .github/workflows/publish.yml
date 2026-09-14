@@ -37,8 +37,11 @@
 # names (payload + .sha256 sidecars + .manifest.json shard) and signs
 # every served name, all inside the leg that holds the fresh bytes. No
 # shared mutable file exists anymore (the monolithic manifest.json /
-# SHA256SUMS.txt are gone — `tebako-pkg release-index` derives them
-# consumer-side), so N legs publish concurrently with zero rendezvous and
+# SHA256SUMS.txt are gone: the per-package shard IS the release-index
+# entry — the resolver's primary form — and a consumer that wants the
+# monolith shape derives it from the shards locally;
+# tebako-packages/metanorma's tools/stage_spawned_mirror is the
+# reference), so N legs publish concurrently with zero rendezvous and
 # one failed leg no longer blocks the green legs' packages. What remains
 # here is the ONE release job per coordinator run: it AUDITS the whole
 # matrix against the release (read-only) — the one duty that genuinely
@@ -47,19 +50,12 @@
 # Deliberate deviations from the ruby coordinator:
 #   - publish defaults to FALSE (ruby: true): publishing is an explicit
 #     operator act.
-#   - No repository_dispatch trigger yet: the python source factory does
-#     not dispatch "tebako release" here (the ruby chain's pin-moved
-#     rebuilds). The trigger arrives when tamatebako/python wires it.
 #   - The release job authenticates with the runner GITHUB_TOKEN, not the
-#     ruby grammar's `TEBAKO_CI_PAT_TOKEN || GITHUB_TOKEN` preference:
-#     the org PAT's fine-grained repository selection predates this repo
-#     and 404s every API call from here (the first publish died at
-#     create_release, run 33999688520). The runner token's contents:write
-#     suffices — no downstream cascade listens to this factory's releases
-#     yet. The PAT preference returns WITH the cascade wiring, and the
-#     PAT's repo selection must cover this repo by then
-#     (tebako-runtime-python#5 — owner action). The legs' in-leg
-#     publish/sign steps ride the same runner token.
+#     ruby grammar's `TEBAKO_CI_PAT_TOKEN || GITHUB_TOKEN` preference: the
+#     audit mutates only this repo's own release, the runner token's
+#     contents:write suffices, and no downstream cascade listens to this
+#     factory's releases yet. (The PAT's repository selection covers this
+#     repo — the bump-source-pin.yml receiver rides it.)
 #   - No registry render/PR step in the release job: this factory has no
 #     tpkg-registry.yaml mirror yet (the ruby coordinator's second
 #     release-job duty); when the mirror arrives the step ports with it.
@@ -166,8 +162,8 @@ jobs:
     # every selected platform's expectations).
     if: ${{ always() && !cancelled() && (inputs.publish || inputs.audit) && (needs.windows.result == 'success' || needs.linux-gnu.result == 'success' || needs.linux-musl.result == 'success' || needs.macos.result == 'success') }}
     env:
-      # Runner GITHUB_TOKEN, not the org PAT preference — see the header's
-      # deviation note and tebako-runtime-python#5.
+      # Runner GITHUB_TOKEN — the audit mutates only this repo's own
+      # release; see the header's deviation note.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
