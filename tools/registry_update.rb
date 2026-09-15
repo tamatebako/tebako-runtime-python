@@ -73,6 +73,7 @@ class RegistryUpdate # rubocop:disable Metrics/ClassLength
   REPO_ROOT = File.expand_path("..", __dir__).freeze
   PAYLOAD_NAME = "python"
   ENGINE = "python"
+  IMPLEMENTATION = "cpython"
   SHARD_SUFFIX = ".manifest.json"
   REGISTRY_BASENAME = "tpkg-registry.yaml"
 
@@ -90,7 +91,11 @@ class RegistryUpdate # rubocop:disable Metrics/ClassLength
     # kind: runtime entries carry NO entrypoints key (the registry validator:
     # only apps and toolkits declare entrypoints) and ALWAYS carry `engine`
     # (spec 04 §2 MINOR 1 — the edge-discovery key; an engine-less runtime
-    # entry is invisible to `kind: runtime` edges). Versions are the composite
+    # entry is invisible to `kind: runtime` edges) AND `implementation`
+    # (spec 28 §8 — the flavor axis; an implementation-named edge sees only
+    # entries carrying its key, so an implementation-less entry is invisible
+    # to e.g. the xml2rfc provider's `implementation: cpython` edge).
+    # Versions are the composite
     # `<python>-<tebako>` keys (one python ships on several tebako lines; a
     # build-variant python such as 3.13.15-jit keeps its suffix inside the
     # composite — spec 05 §5's plain-wins rule ranks it below its plain twin).
@@ -226,11 +231,15 @@ class RegistryUpdate # rubocop:disable Metrics/ClassLength
       payload = { "name" => PAYLOAD_NAME, "kind" => "runtime", "versions" => [] }
       payloads << payload
     end
-    # The edge-discovery key (spec 04 §2 MINOR 1): a runtime entry without
-    # engine: is invisible to `kind: runtime` edges. The renderer owns the
-    # key — upsert it on an EXISTING entry too (a registry rendered before
-    # the key existed gains it on the next render, never by hand-edit).
+    # The edge-discovery keys (spec 04 §2 MINOR 1 + spec 28 §8's flavor
+    # axis): a runtime entry without engine: is invisible to
+    # `kind: runtime` edges, and an implementation-named edge (the
+    # xml2rfc provider's `implementation: cpython`) sees only entries
+    # carrying the same key. The renderer owns both — upserted on an
+    # EXISTING entry too (a registry rendered before a key existed gains
+    # it on the next render, never by hand-edit).
     payload["engine"] = ENGINE
+    payload["implementation"] = IMPLEMENTATION
     versions = payload["versions"] ||= []
     rendered.each { |row| merge_version(versions, row) }
     payload["versions"] = versions.sort_by { |v| version_sort_key(v.fetch("version")) }

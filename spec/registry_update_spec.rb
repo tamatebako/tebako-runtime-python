@@ -136,6 +136,10 @@ RSpec.describe RegistryUpdate do
     # The MINOR-1 edge-discovery key — an engine-less runtime entry is
     # invisible to `kind: runtime` edges.
     expect(payload["engine"]).to eq("python")
+    # spec 28 §8's flavor axis: an implementation-named edge (the xml2rfc
+    # provider's `implementation: cpython`) sees only entries carrying the
+    # same key — entry-level, never per version row.
+    expect(payload["implementation"]).to eq("cpython")
     # Composite <python>-<tebako> keys, numeric sort on both parts, never
     # lexical: 3.9.24 < 3.10.20.
     expect(payload["versions"].map { |v| v["version"] })
@@ -252,6 +256,28 @@ RSpec.describe RegistryUpdate do
     doc = YAML.safe_load(render(shards, registry: existing))
 
     expect(payload_named(doc, "python")["engine"]).to eq("python")
+  end
+
+  it "upserts implementation onto an existing implementation-less python entry (the spec 28 §8 backfill, never a hand-edit)" do
+    existing = <<~YAML
+      schema_version: 1
+      payloads:
+        - name: python
+          kind: runtime
+          engine: python
+          versions:
+            - version: '3.13.15-9.9.8'
+              platforms:
+                aarch64-macos:
+                  artifact: tebako-runtime-9.9.8-3.13.15-macos-arm64.tfs
+                  sha256: 'aaaa'
+              release: {ref: tfs:github:tamatebako/tebako-runtime-python:v9.9.8}
+          default: '3.13.15-9.9.8'
+    YAML
+    shards = shards_of({ python: "3.14.7", platform: "macos-arm64" })
+    doc = YAML.safe_load(render(shards, registry: existing))
+
+    expect(payload_named(doc, "python")["implementation"]).to eq("cpython")
   end
 
   it "is byte-idempotent: rendering over its own output changes nothing" do
