@@ -11,7 +11,11 @@
 # kind: runtime entries carry NO entrypoints key (the registry validator:
 # only apps and toolkits declare entrypoints) and ALWAYS carry `engine`
 # (spec 04 §2 MINOR 1 — the edge-discovery key; an engine-less runtime
-# entry is invisible to `kind: runtime` edges). Versions are the composite
+# entry is invisible to `kind: runtime` edges) AND `implementation`
+# (spec 28 §8 — the flavor axis; an implementation-named edge sees only
+# entries carrying its key, so an implementation-less entry is invisible
+# to e.g. the xml2rfc provider's `implementation: cpython` edge).
+# Versions are the composite
 # `<python>-<tebako>` keys (one python ships on several tebako lines; a
 # build-variant python such as 3.13.15-jit keeps its suffix inside the
 # composite — spec 05 §5's plain-wins rule ranks it below its plain twin).
@@ -146,3 +150,4 @@ payloads:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.2.0
   engine: python
   default: 3.14.7-0.2.0
+  implementation: cpython
