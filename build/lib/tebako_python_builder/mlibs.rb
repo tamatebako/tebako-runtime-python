@@ -154,11 +154,17 @@ module TebakoPythonBuilder
     # darwin: full paths under ld_classic (the class comment); the closure
     # rides complete (no -l: search exists and ld_classic resolves the
     # duplicates first-wins), the brew archives follow.
+    # Security.framework: the v2.8.4+ unit's driver embeds the trust
+    # bridge's OS-store enumeration (rustls-native-certs →
+    # security-framework objects) — its kSec*/_Sec*/_CMS*/
+    # _Authorization*/_SSL* references resolve only against the system
+    # Security framework (the first v2.8.9 leg's link died on the 288-strong
+    # undefined set; tebako-runtime-ruby's mlibs.rb carries the same arm).
     def darwin_libs
       libs = @link_unit.libraries(@link_unit_dir)
       (["-Wl,-ld_classic"] + libs +
        [static_lib("ssl"), static_lib("crypto"), static_lib("z")] +
-       %w[-lc++ -lc++abi]).join(" ")
+       %w[-framework Security -lc++ -lc++abi]).join(" ")
     end
 
     # msys: the group minus the pacman-covered set, the static C++
