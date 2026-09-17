@@ -45,7 +45,13 @@ module TebakoPythonBuilder
   # `python3 -m pip` is the pip form; a pip3 console script would carry
   # a dead build-prefix shebang (README's pip decision).
   # POSIX ssl rides the host's /etc/ssl; windows resolves the system cert
-  # store — no materialize declaration anywhere.
+  # store. MSYS builds declare the windows materialize boot tier
+  # (windows_boot: materialize, schema_minor 11): the unpatched
+  # interpreter cannot consume the driver's mounts on windows, so the
+  # driver extracts the mounted+verified images into the exec cache and
+  # rewires the runtime root to the extracted host tree. POSIX builds
+  # omit the key — their boots read the mounts directly and never read
+  # it.
   class ImageManifest
     # In-image location the driver reads (tpkg::PAYLOAD_MANIFEST_PATH).
     PATH = File.join("__tpkg__", "manifest.yaml").freeze
@@ -117,9 +123,11 @@ module TebakoPythonBuilder
     # release-line pin, never a constraint (spec 28 §8's mode rule).
     # Both predate v0.1.0's manifests — cached v0.1.0 installs stay
     # eligible through the resolver's compat window (tpkg::runtime_store).
+    # windows_boot (schema_minor 11) is emitted for MSYS builds only: the
+    # windows boot tier, whose single locked value is `materialize`.
     def provides # rubocop:disable Metrics/MethodLength -- one declarative block per spec 03 §2.2; splitting it scatters the grammar
       python = TebakoPythonBuilder::PythonVersion.new(@python_version)
-      {
+      declaration = {
         "provides" => {
           "engine" => "python",
           "implementation" => "cpython",
@@ -131,6 +139,8 @@ module TebakoPythonBuilder
         "built_from" => { "src_sha256" => @src_sha256, "patch_set" => @patch_set },
         "capabilities" => { "exec" => true, "read" => true, "runtime" => true }
       }
+      declaration["windows_boot"] = "materialize" if @platform.msys?
+      declaration
     end
   end
 end

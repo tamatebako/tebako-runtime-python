@@ -74,7 +74,18 @@ container_version: "v1"
 # linux-musl-{x86_64,arm64}, macos-{x86_64,arm64} and
 # x86_64-windows-gnu. NEVER pin v2.3.1: it published partial (no
 # linux-arm64 units) after the aarch64 SYS_dup2 compile break.
-link_unit_release: "v2.3.2"
+# v2.8.9 (tebako#619, tebako#620): the windows materialize boot tier
+# (payload-manifest schema_minor 11 — windows_boot: materialize on a
+# runtime's provides; the msys leg declares it: the unpatched
+# interpreter cannot consume the driver's mounts on windows, so the
+# driver extracts the mounted+verified images into the exec cache and
+# rewires the runtime root to the extracted host tree) and the
+# variant-suffixed constraint grammar (schema_minor 12 — a constraint
+# component may carry a -label, so an exact pin names a LINE). The
+# v2.3.2 → v2.8.9 arc also brings the ruby factory's proven v2.8.x
+# driver line (the spec-33 runtime-on-runtime composition, arscope
+# dedupe, mount-boundary synthesis). Contract unchanged (2).
+link_unit_release: "v2.8.9"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
