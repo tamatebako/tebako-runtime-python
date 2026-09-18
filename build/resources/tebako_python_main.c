@@ -61,7 +61,20 @@
 /* ucrt has no POSIX setenv; _putenv_s overwrites unconditionally, which
  * is exactly what every call site below asks (overwrite=1). */
 #ifdef _WIN32
+#include <windows.h>
 #define setenv(name, value, overwrite) ((void)(overwrite), _putenv_s(name, value))
+
+/* The linked driver arms the handoff env with SetEnvironmentVariable
+ * (Rust's std::env::set_var) — ucrt's getenv reads the CRT's startup
+ * snapshot and never sees the driver's in-process writes, so on windows
+ * every variable the boot may have (re)set — the spec 17 §7 rewired
+ * TEBAKO_MOUNT_ROOT, the tier's TEBAKO_MATERIALIZE_BOOT marker, the
+ * serialized TEBAKO_TFS_MOUNTS — is read through the Win32 API. Returns
+ * the value's length; 0 means absent OR empty (the driver env filter's
+ * own semantics — its respawn scrub blanks the pair). */
+static DWORD tebako_win_env(const char *name, char *buf, DWORD cap) {
+    return GetEnvironmentVariableA(name, buf, cap);
+}
 #endif
 
 /* The spec-17 driver ABI (tamatebako/tebako crates/tebako-driver ffi.rs). */
@@ -149,9 +162,20 @@ int main(int argc, char **argv) {
      * along (the ruby runtime's RUBYLIB parity — the runtime never
      * scrubs it). */
     if (getenv("TEBAKO_RUNTIME_IMAGE") != NULL) {
+#ifdef _WIN32
+        /* The rewired root is the driver's own write — invisible to
+         * ucrt's getenv; read it through the Win32 API (tebako_win_env).
+         * A value past the cap is no usable mount root: fall back and
+         * let getpath name the failure. */
+        static char root_buf[32768];
+        const char *root = tebako_win_env("TEBAKO_MOUNT_ROOT", root_buf, sizeof root_buf) > 0
+            ? root_buf : tebako_mount_point();
+#else
         const char *root = getenv("TEBAKO_MOUNT_ROOT");
-        setenv("PYTHONHOME",
-               (root != NULL && root[0] != '\0') ? root : tebako_mount_point(), 1);
+        if (root == NULL || root[0] == '\0')
+            root = tebako_mount_point();
+#endif
+        setenv("PYTHONHOME", root, 1);
     }
 
 #ifdef _WIN32
@@ -160,17 +184,21 @@ int main(int argc, char **argv) {
      * (consumed above); the interpreter reads plain host files, so no
      * preload tier is needed. The in-process mounts still serialized
      * TEBAKO_TFS_MOUNTS — the tier's own marker, not the mount list,
-     * gates the exit-69 refusal. */
-    if (getenv("TEBAKO_MATERIALIZE_BOOT") != NULL)
+     * gates the exit-69 refusal. Both reads go through tebako_win_env:
+     * the driver set them in-process. */
+    {
+        char present[2];
+        if (tebako_win_env("TEBAKO_MATERIALIZE_BOOT", present, sizeof present) > 0)
+            return Py_BytesMain(argc, argv);
+        if (tebako_win_env("TEBAKO_TFS_MOUNTS", present, sizeof present) > 0) {
+            fputs("tebako-python: the runtime mounted its filesystem image, but the env image "
+                  "grants no windows boot tier (provides.windows_boot: materialize, spec 17 §7) "
+                  "and windows has no preload visibility tier — the interpreter "
+                  "cannot read the mounted tree\n", stderr);
+            return 69;
+        }
         return Py_BytesMain(argc, argv);
-    if (getenv("TEBAKO_TFS_MOUNTS") != NULL) {
-        fputs("tebako-python: the runtime mounted its filesystem image, but the env image "
-              "grants no windows boot tier (provides.windows_boot: materialize, spec 17 §7) "
-              "and windows has no preload visibility tier — the interpreter "
-              "cannot read the mounted tree\n", stderr);
-        return 69;
     }
-    return Py_BytesMain(argc, argv);
 #else
     if (getenv("TEBAKO_TFS_MOUNTS") == NULL)
         return Py_BytesMain(argc, argv); /* bare boot — nothing mounted */
