@@ -55,8 +55,8 @@ module TebakoPythonBuilder
     # schema/version, era, image_layout, mount_root,
     # interpreter_api_version; the additive mount_root_override grant
     # (schema_minor 1) is emitted ALWAYS — truthful by construction: the
-    # fs TU sets PYTHONHOME from tebako_mount_point(), the driver's
-    # effective root, so the interpreter follows TEBAKO_MOUNT_ROOT (the
+    # fs TU sets PYTHONHOME env-first (TEBAKO_MOUNT_ROOT when set, else
+    # tebako_mount_point()), so the interpreter follows the override (the
     # factory owns both sides of the grant; the boot smoke asserts the
     # chain end-to-end). The additive preload_shim grant (schema_minor 2)
     # names exactly the staged shim's in-image path. The additive
@@ -109,6 +109,7 @@ module TebakoPythonBuilder
       FileUtils.mkdir_p(dest)
       FileUtils.cp_r("#{staged_tree}/.", dest)
       prune(dest)
+      flatten_nt_layout(dest) if @platform.msys?
       deploy_preload(dest)
       deploy_layout(dest)
       deploy_manifest(dest)
@@ -116,6 +117,28 @@ module TebakoPythonBuilder
     end
 
     private
+
+    # The MSYS image's NT layout. This build's getpath runs the os_name=nt
+    # branch (no getpath patch in the source series): the stdlib resolves
+    # at <prefix>/Lib and the platstdlib — the extension modules' dir — at
+    # <prefix>/<platlibdir>, and platlibdir is 'lib' here. On the windows
+    # filesystem those two spellings are ONE directory, so the staged
+    # POSIX tree (lib/pythonX.Y with lib-dynload/ inside) flattens into
+    # lib/ itself: the stdlib beside the .pyd extensions and the deployed
+    # tebako card (spec 18's lib/tebako/ path is untouched). Under the
+    # spec 17 §7 materialize tier the extracted tree is then a plain
+    # PYTHONHOME the interpreter boots from — sys.prefix == the extracted
+    # tree and encodings imports at init. POSIX images keep the versioned
+    # lib/pythonX.Y tree (the posix getpath branch expects exactly it).
+    def flatten_nt_layout(tree)
+      libdir = File.join(tree, "lib", @python.libdir_name)
+      dynload = File.join(libdir, "lib-dynload")
+      if File.directory?(dynload)
+        Dir.glob(File.join(dynload, "*")).each { |f| FileUtils.mv(f, File.join(tree, "lib")) }
+      end
+      Dir.glob(File.join(libdir, "*")).each { |f| FileUtils.mv(f, File.join(tree, "lib")) }
+      FileUtils.remove_entry_secure(libdir)
+    end
 
     def prune(tree)
       PRUNE_TOP.each { |d| FileUtils.rm_rf(File.join(tree, d), secure: true) }
