@@ -231,16 +231,17 @@ jobs:
 
       # The ucrt64 CPython toolchain: the compiler/libc + the mingw-w64
       # openssl/zlib dev packages (the msys-runtime openssl/zlib would
-      # mismatch the ucrt64 target), plus make and the msys ruby the
-      # build tooling runs on. The set settles with the first windows
-      # leg run.
+      # mismatch the ucrt64 target), libffi (the msys _ctypes extension's
+      # only dep — bound statically via Mlibs' MODULE__CTYPES_LDFLAGS
+      # rewrite), plus make and the msys ruby the build tooling runs on.
       - name: Install pacman packages
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
           pacman -S --needed --noconfirm git make ruby \
             mingw-w64-ucrt-x86_64-toolchain \
-            mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-zlib \
+            mingw-w64-ucrt-x86_64-libffi
 
       # --- build -------------------------------------------------------
       # The jit legs provision their build-time-only toolchain first

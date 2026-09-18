@@ -100,14 +100,21 @@ grants no windows boot tier — see the windows boundary below).
 - **Static, in the exe:** `_ssl`, `_hashlib` (both against static
   openssl), `zlib`, `binascii` (static zlib) — their deps bind via the
   link unit's Mlibs rewrites.
-- **Disabled:** `_bz2`, `_lzma`, `_sqlite3`, `_ctypes`, `_ctypes_test`,
-  `readline`, `_curses`, `_curses_panel`, `_gdbm`, `_dbm`, `nis`,
-  `_tkinter`, `_uuid` — the host-asymmetric extensions. Their python
-  sides (`test/`, `idlelib`, `tkinter`/`turtle`) are pruned from the
-  image: the runtime answers "no such module" by absence, never by a
-  broken import.
+- **Disabled:** `_bz2`, `_lzma`, `_sqlite3`, `_ctypes_test`, `readline`,
+  `_curses`, `_curses_panel`, `_gdbm`, `_dbm`, `nis`, `_tkinter`,
+  `_uuid` — the host-asymmetric extensions, plus `_ctypes` on POSIX.
+  Their python sides (`test/`, `idlelib`, `tkinter`/`turtle`) are pruned
+  from the image: the runtime answers "no such module" by absence, never
+  by a broken import.
+- **Re-enabled on windows-msys:** `_ctypes` — windows payloads reach
+  host DLLs through ctypes; upstream's libffi detection builds it
+  against the ucrt64 libffi package with no source patch, and Mlibs'
+  `MODULE__CTYPES_LDFLAGS` rewrite binds libffi statically (a shared
+  `libffi-*.dll` would break the audience rule). The `.pyd` rides the
+  image's `lib/` (the nt platstdlib — the windows boundary above).
 - **Everything else** configure detects rides the image as dynamic
-  extensions in `lib-dynload`, mounted with the stdlib.
+  extensions in `lib-dynload` (`lib/` on windows), mounted with the
+  stdlib.
 
 ## site-packages and pip
 
