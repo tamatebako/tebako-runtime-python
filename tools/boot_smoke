@@ -70,6 +70,12 @@
 #                        never surface an instant WSAEWOULDBLOCK
 #                        (10035), the msys pip connect pathology
 #                                                             [windows]
+#   e-flag               -E in the handed-off argv must be refused by
+#                        name (exit 2): the flags make getpath ignore
+#                        the driver-set PYTHONHOME — the only channel
+#                        the materialize tier's rewired root rides —
+#                        and the boot would die on the encodings
+#                        import at the baked prefix        [windows]
 #   mount-root-override  TEBAKO_MOUNT_ROOT=<abs>: boots, sys.prefix ==
 #                        the override (the image grants it)      [POSIX]
 #   mount-root-malformed TEBAKO_MOUNT_ROOT=relative/path -> exit 65
@@ -91,15 +97,15 @@
 # (PYTHON_JIT=1) is itself exercised by the boot surviving.
 #
 # POSIX legs run the full set. A windows leg runs bare + materialize-boot
-# + socket-timeout + the named-error trio (bad-mount, mount-root-malformed,
-# override-ungranted) — the materialize tier (spec 17 §7) is windows'
-# visibility answer, so the in-image imports stay POSIX-only (README's
-# windows boundary).
+# + socket-timeout + e-flag + the named-error trio (bad-mount,
+# mount-root-malformed, override-ungranted) — the materialize tier
+# (spec 17 §7) is windows' visibility answer, so the in-image imports
+# stay POSIX-only (README's windows boundary).
 #
 # Usage:
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
 #                    [--scenario all|bare|boot|payload|bad-mount|
-#                                materialize-boot|socket-timeout|
+#                                materialize-boot|socket-timeout|e-flag|
 #                                mount-root-override|
 #                                mount-root-malformed|override-ungranted|jit]
 #
@@ -332,7 +338,7 @@ def jit_probe(line)
   end
 end
 
-KNOWN_SCENARIOS = %w[bare boot payload bad-mount materialize-boot socket-timeout
+KNOWN_SCENARIOS = %w[bare boot payload bad-mount materialize-boot socket-timeout e-flag
                      mount-root-override mount-root-malformed override-ungranted jit].freeze
 # Scenarios that build fixture images with the tfs CLI.
 TFS_SCENARIOS = %w[payload override-ungranted].freeze
@@ -344,8 +350,8 @@ def selected_scenarios(platform, only)
     selected += %w[boot payload mount-root-override jit] if
       %w[all boot payload mount-root-override jit].include?(only)
   else
-    selected += %w[materialize-boot socket-timeout] if
-      %w[all materialize-boot socket-timeout].include?(only)
+    selected += %w[materialize-boot socket-timeout e-flag] if
+      %w[all materialize-boot socket-timeout e-flag].include?(only)
   end
   selected += %w[bad-mount mount-root-malformed override-ungranted] if
     %w[all bad-mount mount-root-malformed override-ungranted].include?(only)
@@ -492,7 +498,27 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         out, err, st = boot(executable, [probe_path], { "TEBAKO_RUNTIME_IMAGE" => image },
                             timeout: SOCKET_PROBE_TIMEOUT)
         expect_ok("socket-timeout", out, err, st, "SOCKET-PROBE OVERALL: PASS")
-        puts out[/^DIAG .*$/].to_s
+        puts out.force_encoding(Encoding::UTF_8).scrub[/^DIAG .*$/].to_s
+      when "e-flag"
+        # -E/-I make getpath ignore the environment (Modules/getpath.py's
+        # ignore_environment consult for PYTHONHOME) — the ONLY channel
+        # the windows materialize tier's rewired root rides — so the boot
+        # would fall back to the baked, nonexistent prefix and die on the
+        # encodings import (the consumer's `pip install --target` under
+        # -E). The fs TU refuses the flags by name (exit 2, CPython's own
+        # usage-error code) instead; POSIX never takes the branch (there
+        # the preload shim serves the VFS at the baked root path, so -E
+        # boots).
+        unless File.file?(image)
+          check("e-flag", false, "no sibling env image #{image}")
+          next
+        end
+        out, err, st = boot(executable, ["-E", "-c", "print('unreached')"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image })
+        expect_exit("e-flag: the -E handoff is refused", out, err, st, 2)
+        check("e-flag: the refusal names the mechanism",
+              err.include?("-E/-I make the interpreter ignore the driver-set PYTHONHOME"),
+              "stderr: #{err}")
       when "mount-root-override"
         override = File.join(dir, "override-root")
         out, err, st = boot(executable, ["-c", probe],

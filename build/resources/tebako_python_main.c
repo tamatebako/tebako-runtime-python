@@ -35,7 +35,10 @@
  * 69 (no preload tier there) — unless the env image grants the spec 17
  * §7 materialize tier (TEBAKO_MATERIALIZE_BOOT: the driver extracted
  * every mounted image to a host tree, so the interpreter reads plain
- * host files and no visibility tier is needed).
+ * host files and no visibility tier is needed). On that tier -E/-I in
+ * the handed-off argv are refused with exit 2 (the flags would make
+ * getpath ignore the driver-set PYTHONHOME — the only channel the
+ * rewired root rides).
  */
 
 /* glibc AND musl under -std=c11 (strict ANSI — CPython's default cflags,
@@ -63,6 +66,32 @@
 #ifdef _WIN32
 #include <windows.h>
 #define setenv(name, value, overwrite) ((void)(overwrite), _putenv_s(name, value))
+
+/* The interpreter argv the driver handed off (argv[0] is the resolved
+ * entry, argv[1..] the user arguments, CPython's option grammar intact).
+ * Returns 1 when -E or -I rides an option position: the flags make
+ * getpath ignore the environment (Modules/getpath.py consults
+ * ignore_environment for PYTHONHOME), and on the windows materialize
+ * tier the runtime root RIDES the environment — the boot then falls
+ * back to the baked prefix, which exists nowhere on the host, and dies
+ * on the encodings import. Conservative by construction: only the
+ * cluster-leading spelling is matched ("-sE" falls through to the old
+ * cryptic init death, never to a wrong refusal); -c/-m consume the next
+ * argument, so options end there; -X/-W take attached values and just
+ * fall through the cluster walk. */
+static int tebako_argv_carries_ignore_environment(int argc, char **argv) {
+    int i;
+    for (i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        if (arg[0] != '-' || arg[1] == '\0' || strcmp(arg, "--") == 0)
+            return 0; /* the entry/script argument, stdin, or end of options */
+        if (arg[1] == 'E' || arg[1] == 'I')
+            return 1;
+        if (arg[1] == 'c' || arg[1] == 'm')
+            return 0; /* -c/-m take the next argument — options ended */
+    }
+    return 0;
+}
 
 /* The linked driver arms the handoff env with SetEnvironmentVariable
  * (Rust's std::env::set_var) — ucrt's getenv reads the CRT's startup
@@ -188,8 +217,25 @@ int main(int argc, char **argv) {
      * the driver set them in-process. */
     {
         char present[2];
-        if (tebako_win_env("TEBAKO_MATERIALIZE_BOOT", present, sizeof present) > 0)
+        if (tebako_win_env("TEBAKO_MATERIALIZE_BOOT", present, sizeof present) > 0) {
+            /* The env channel is load-bearing here (the root was rewired
+             * to the extracted tree this boot): -E/-I are refused by
+             * name instead of the interpreter dying on the encodings
+             * import with stdlib dir at the baked, nonexistent prefix
+             * (exit 2 — CPython's own usage-error code). POSIX never
+             * takes this branch: there the preload shim serves the VFS
+             * at the baked root path, so getpath resolves without the
+             * environment and -E boots. */
+            if (tebako_argv_carries_ignore_environment(argc, argv)) {
+                fputs("tebako-python: -E/-I make the interpreter ignore the driver-set "
+                      "PYTHONHOME — on the windows materialize tier (spec 17 §7) the runtime "
+                      "root rides the environment, so the boot cannot resolve the stdlib; "
+                      "drop the flag (environment hygiene belongs to the invoking shell)\n",
+                      stderr);
+                return 2;
+            }
             return Py_BytesMain(argc, argv);
+        }
         if (tebako_win_env("TEBAKO_TFS_MOUNTS", present, sizeof present) > 0) {
             fputs("tebako-python: the runtime mounted its filesystem image, but the env image "
                   "grants no windows boot tier (provides.windows_boot: materialize, spec 17 §7) "
