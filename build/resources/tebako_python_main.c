@@ -32,7 +32,10 @@
  * malformed -> 65 (driver-validated pre-mount); ungranted override -> 78
  * (the layout pair check); a mounted image with no preload_shim grant ->
  * 78 (below: the interpreter would boot blind); windows with any mount ->
- * 69 (no preload tier there).
+ * 69 (no preload tier there) — unless the env image grants the spec 17
+ * §7 materialize tier (TEBAKO_MATERIALIZE_BOOT: the driver extracted
+ * every mounted image to a host tree, so the interpreter reads plain
+ * host files and no visibility tier is needed).
  */
 
 /* glibc AND musl under -std=c11 (strict ANSI — CPython's default cflags,
@@ -132,19 +135,38 @@ int main(int argc, char **argv) {
     snprintf(version, sizeof version, "%u", tebako_driver_contract_version());
     setenv("TEBAKO_CONTRACT_VERSION", version, 1);
 
-    /* PYTHONHOME from the EFFECTIVE mount root (a TEBAKO_MOUNT_ROOT
-     * override already applied by the driver) — the unpatched
-     * interpreter's whole relocation story. A bare exe (no env image) is
-     * dev mode: PYTHONHOME stays untouched and getpath resolves from the
-     * exe's own path. PYTHONPATH, when inherited, rides along (the ruby
-     * runtime's RUBYLIB parity — the runtime never scrubs it). */
-    if (getenv("TEBAKO_RUNTIME_IMAGE") != NULL)
-        setenv("PYTHONHOME", tebako_mount_point(), 1);
+    /* PYTHONHOME from the EFFECTIVE mount root, read env-FIRST — the
+     * ruby factory's era-2 pattern (rbconfig emits
+     * ENV["TEBAKO_MOUNT_ROOT"] || <baked>): the driver's ffi mount point
+     * is fixed before the windows materialize tier (spec 17 §7) rewires
+     * TEBAKO_MOUNT_ROOT to the extracted env tree, so
+     * tebako_mount_point() alone would strand PYTHONHOME on the baked
+     * root (the interpreter then dies on the encodings import with
+     * sys.prefix at the nonexistent baked tree). An empty override reads
+     * as absent (the driver's respawn scrub blanks the pair). A bare exe
+     * (no env image) is dev mode: PYTHONHOME stays untouched and getpath
+     * resolves from the exe's own path. PYTHONPATH, when inherited, rides
+     * along (the ruby runtime's RUBYLIB parity — the runtime never
+     * scrubs it). */
+    if (getenv("TEBAKO_RUNTIME_IMAGE") != NULL) {
+        const char *root = getenv("TEBAKO_MOUNT_ROOT");
+        setenv("PYTHONHOME",
+               (root != NULL && root[0] != '\0') ? root : tebako_mount_point(), 1);
+    }
 
 #ifdef _WIN32
+    /* The materialize tier (spec 17 §7): the driver extracted every
+     * mounted image into the exec cache and rewired TEBAKO_MOUNT_ROOT
+     * (consumed above); the interpreter reads plain host files, so no
+     * preload tier is needed. The in-process mounts still serialized
+     * TEBAKO_TFS_MOUNTS — the tier's own marker, not the mount list,
+     * gates the exit-69 refusal. */
+    if (getenv("TEBAKO_MATERIALIZE_BOOT") != NULL)
+        return Py_BytesMain(argc, argv);
     if (getenv("TEBAKO_TFS_MOUNTS") != NULL) {
-        fputs("tebako-python: the runtime mounted its filesystem image, but the windows "
-              "visibility tier is not implemented — the interpreter "
+        fputs("tebako-python: the runtime mounted its filesystem image, but the env image "
+              "grants no windows boot tier (provides.windows_boot: materialize, spec 17 §7) "
+              "and windows has no preload visibility tier — the interpreter "
               "cannot read the mounted tree\n", stderr);
         return 69;
     }
