@@ -289,6 +289,29 @@ module TebakoPythonBuilder
     # static archive there is discarded as unneeded); configure prepends
     # its own finds, so this pair stays last. The ruby factory's proven
     # recipe (its Mlibs::MSYS_DLL_LIBRARIES).
+    # ac_cv_func_poll=no: CPython's socket-timeout wait engine
+    # (Modules/socketmodule.c internal_select) prefers poll() whenever
+    # configure defines HAVE_POLL. On mingw-w64 the generic
+    # AC_CHECK_FUNC(poll) probe passes against the CRT's poll emulation,
+    # so the default msys build routes EVERY positive-timeout socket
+    # operation — pip's vendored urllib3 connect (settimeout(15)) among
+    # them — through that emulation; no mainstream Windows CPython
+    # exercises it (MSVC's pyconfig never defines HAVE_POLL; python.org
+    # builds wait with winsock select()). In the driver-linked runtime
+    # the emulation mis-reports for the WSA SOCKET handle: every
+    # positive-timeout connect died INSTANTLY with WinError 10035 — the
+    # stale WSAGetLastError the just-failed connect left, raised through
+    # sock_call_ex's errorhandler after internal_select mis-reported —
+    # while blocking-mode urlopen (which never enters the wait) reached
+    # pypi.org from the same runtime (the xml2rfc windows leg's pip
+    # storm: runs 35326025152 @ v0.2.2 / 35334306542 @ v0.2.3). The
+    # autoconf cache override skips the probe, HAVE_POLL stays
+    # undefined, and socketmodule/_ssl/selectmodule compile the
+    # winsock-select shape the MSVC platform has shipped for decades
+    # (select.poll absent — also the python.org windows shape; the msys
+    # select module links -lws2_32 via the source series' 0074).
+    # tools/socket_probe.py pins the connect modes per build (the
+    # boot smoke's socket-timeout scenario, windows legs).
     # Everywhere else the system openssl/zlib are found by the default
     # detection (the containers ship libssl-dev/zlib1g-dev,
     # openssl-dev/zlib-static, pacman openssl).
@@ -302,7 +325,8 @@ module TebakoPythonBuilder
       elsif @platform.linux_gnu?
         { "LDFLAGS" => "-pthread" }
       elsif @platform.msys?
-        { "LIBS" => "-static-libgcc -l:libwinpthread.a" }
+        { "LIBS" => "-static-libgcc -l:libwinpthread.a",
+          "ac_cv_func_poll" => "no" }
       else
         {}
       end.merge(@jit_env)

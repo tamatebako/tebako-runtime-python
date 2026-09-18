@@ -116,6 +116,25 @@ grants no windows boot tier — see the windows boundary below).
   extensions in `lib-dynload` (`lib/` on windows), mounted with the
   stdlib.
 
+## The windows-msys configure shape
+
+The msys leg passes `ac_cv_func_poll=no` into configure
+(`PythonBuild#configure_env`): CPython's socket-timeout wait engine
+(`Modules/socketmodule.c` `internal_select`) prefers `poll()` whenever
+`HAVE_POLL` is defined, and on mingw-w64 the generic `AC_CHECK_FUNC(poll)`
+probe passes against the CRT's `poll()` emulation. In the driver-linked
+runtime that emulation mis-reports for a WSA `SOCKET` handle, and every
+positive-timeout socket operation — pip's vendored urllib3 connect
+(`settimeout(15)`) among them — surfaced instantly as
+`[WinError 10035]` (the stale `WSAGetLastError()` of the just-failed
+connect, raised through `sock_call_ex`'s error handler), while
+blocking-mode sockets worked. The override keeps `HAVE_POLL` undefined
+so the runtime compiles the winsock-select wait shape the MSVC platform
+has always shipped (`select.poll` absent — also the python.org windows
+shape). `tools/socket_probe.py` pins the connect modes per build — the
+boot smoke's `socket-timeout` scenario on the windows legs (it runs
+under any interpreter for comparison, including a plain msys2 python).
+
 ## site-packages and pip
 
 The env image ships the stdlib plus a **declarative site-packages
