@@ -16,7 +16,8 @@ coordinator shape; `publish.yml` carries the release machinery via
 linux-gnu / linux-musl / macos (x86_64 + arm64) and windows-ucrt64. The
 boot smoke asserts imports of json/ssl/zlib off the mounted image, the
 dlopen extension path, and the `TEBAKO_MOUNT_ROOT` 65/78 parity cases
-on POSIX, and the bare + named-error trio (65/69/78) on windows, plus
+on POSIX, and the materialize boot (spec 17 §7) + bare + named-error
+trio (65/69/78) on windows, plus
 the symbol-provenance gate everywhere.
 
 ## The driver is linked into the interpreter, not wrapped
@@ -73,8 +74,11 @@ incarnations:
    child skips the boot and runs the interpreter, whose libc IO the shim
    now serves from the VFS.
 
-`PYTHONHOME` is set from `tebako_mount_point()` (the driver's effective
-root — a `TEBAKO_MOUNT_ROOT` override already applied) whenever an env
+`PYTHONHOME` is set env-first — `TEBAKO_MOUNT_ROOT` when set-and-
+nonempty, else `tebako_mount_point()` (the ruby factory's era-2 rbconfig
+pattern: the driver's ffi mount point is fixed before the windows
+materialize tier rewires `TEBAKO_MOUNT_ROOT` to the extracted env tree,
+so the baked value alone would strand the interpreter) whenever an env
 image is named; an inherited `PYTHONPATH` rides along (the ruby runtime's
 `RUBYLIB` parity). A **bare exe** (no `TEBAKO_RUNTIME_IMAGE`) is dev
 mode: `PYTHONHOME` stays untouched and getpath resolves from the exe's
@@ -85,8 +89,8 @@ exit, the driver's warning on stderr).
 Named exits are the driver's, surfaced unmodified: 65
 (`TEBAKO_MOUNT_ROOT` malformed), 78 (ungranted override, or an env image
 with no `preload_shim` grant — an unpatched CPython would boot blind),
-74 (re-exec failure), 69 (windows with any mount — see the windows
-boundary below).
+74 (re-exec failure), 69 (windows with a mounted image whose env image
+grants no windows boot tier — see the windows boundary below).
 
 ## The extension set (v1 hermetic core)
 
@@ -126,12 +130,14 @@ interpreter by convention.
 
 The windows leg (ucrt64, `--enable-shared` — issue 40's answer: on PE a
 loadable module cannot carry undefined symbols, so the extensions link
-`libpython<X.Y>.dll`; the ruby factory ships the same shape) is the
-**driver-contract surface only**: the exe boots the driver, answers
-`--tebako-image`/`TEBAKO_RUNTIME_IMAGE` with the same named errors, and
-runs the interpreter only when nothing was mounted (bare/dev mode).
-There is no preload tier on windows — with any mount the fs TU exits
-**69** with a named error. The shared build ships
+`libpython<X.Y>.dll`; the ruby factory ships the same shape) boots
+through the **materialize tier** (spec 17 §7): the env image declares
+`windows_boot: materialize`, so on a mounted boot the driver extracts
+every image to a host tree under the exec cache, rewires
+`TEBAKO_MOUNT_ROOT` to the extracted env tree, and the interpreter runs
+off plain host files — there is no preload tier on windows. A mounted
+boot whose env image grants no windows boot tier still exits **69** with
+a named error. The shared build ships
 the DLL as a `<package>.dll` release facet (the release manifest's
 `dll.install_as` names the PE spelling the store materializes beside
 the exe), and the mingw support set (libgcc/libwinpthread) is

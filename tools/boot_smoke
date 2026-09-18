@@ -50,6 +50,14 @@
 #                        from the mounted payload                  [POSIX]
 #   bad-mount            --tebako-image <missing>:-:/nope -> exit 69
 #                        (the unavailable image, named on stderr)
+#   materialize-boot     the windows materialize tier (spec 17 §7): the
+#                        env image grants windows_boot: materialize, so
+#                        the driver extracts it to a host tree and
+#                        rewires TEBAKO_MOUNT_ROOT; the interpreter
+#                        starts (encodings imports at init), the tier
+#                        announces itself on stderr, and sys.prefix is
+#                        the extracted tree — NEVER the baked root
+#                        [windows]
 #   mount-root-override  TEBAKO_MOUNT_ROOT=<abs>: boots, sys.prefix ==
 #                        the override (the image grants it)      [POSIX]
 #   mount-root-malformed TEBAKO_MOUNT_ROOT=relative/path -> exit 65
@@ -70,16 +78,17 @@
 # (CONFIGURE_CFLAGS_NODIST) — the tier-2 optimizer install at init
 # (PYTHON_JIT=1) is itself exercised by the boot surviving.
 #
-# POSIX legs run the full set. A windows leg runs bare + the named-
-# error trio (bad-mount, mount-root-malformed, override-ungranted) —
-# with no preload tier on windows, the in-image imports stay POSIX-only
-# (README's windows boundary).
+# POSIX legs run the full set. A windows leg runs bare + materialize-boot
+# + the named-error trio (bad-mount, mount-root-malformed,
+# override-ungranted) — the materialize tier (spec 17 §7) is windows'
+# visibility answer, so the in-image imports stay POSIX-only (README's
+# windows boundary).
 #
 # Usage:
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
 #                    [--scenario all|bare|boot|payload|bad-mount|
-#                                mount-root-override|mount-root-malformed|
-#                                override-ungranted|jit]
+#                                materialize-boot|mount-root-override|
+#                                mount-root-malformed|override-ungranted|jit]
 #
 # Exit codes: 0 green · 141 usage/resolution · 143 a scenario failed.
 
@@ -94,6 +103,11 @@ $LOAD_PATH.unshift(File.join(REPO_ROOT, "build", "lib"))
 require "tebako_python_builder"
 
 BOOT_TIMEOUT = 60
+# The materialize tier's first boot extracts the whole env image to the
+# exec cache (spec 17 §7) — thousands of files, hashed in flight, on a
+# Defender-scanned windows runner. The scenario's deadline is wider; a
+# cache-hit boot is nowhere near it.
+MATERIALIZE_BOOT_TIMEOUT = 300
 IMAGE_SUFFIXES = %w[.tfs .dwarfs].freeze
 MARKER_SUFFIXES = %w[.abi .sha256 .origin .yaml .dll].freeze
 NON_EXECUTABLE_SUFFIXES = (IMAGE_SUFFIXES + MARKER_SUFFIXES).freeze
@@ -159,7 +173,7 @@ end
 
 # --- scenario drivers ------------------------------------------------------
 
-def boot(executable, argv, env_extra)
+def boot(executable, argv, env_extra, timeout: BOOT_TIMEOUT)
   Dir.mktmpdir("tebako-python-boot-smoke") do |cwd|
     env = ENV_SCRUBBED.to_h { |key| [key, nil] }
     ENV.each_key { |key| env[key] = nil if key.start_with?("TEBAKO_") }
@@ -174,7 +188,7 @@ def boot(executable, argv, env_extra)
     Open3.popen3(env, executable, *argv, chdir: cwd) do |stdin, stdout, stderr, wait_thr|
       stdin.close
       readers = [stdout, stderr].map { |io| Thread.new { io.read } }
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + BOOT_TIMEOUT
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
       loop do
         break if wait_thr.join(0.1)
         next unless Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
@@ -182,7 +196,7 @@ def boot(executable, argv, env_extra)
         Process.kill("KILL", wait_thr.pid)
         wait_thr.join
         readers.each(&:kill)
-        return ["", "boot_smoke: runtime did not exit within #{BOOT_TIMEOUT}s (hard-killed)", nil]
+        return ["", "boot_smoke: runtime did not exit within #{timeout}s (hard-killed)", nil]
       end
       out, err = readers.map(&:value)
       status = wait_thr.value
@@ -301,8 +315,8 @@ def jit_probe(line)
   end
 end
 
-KNOWN_SCENARIOS = %w[bare boot payload bad-mount mount-root-override mount-root-malformed
-                     override-ungranted jit].freeze
+KNOWN_SCENARIOS = %w[bare boot payload bad-mount materialize-boot mount-root-override
+                     mount-root-malformed override-ungranted jit].freeze
 # Scenarios that build fixture images with the tfs CLI.
 TFS_SCENARIOS = %w[payload override-ungranted].freeze
 
@@ -312,6 +326,8 @@ def selected_scenarios(platform, only)
   if platform.posix?
     selected += %w[boot payload mount-root-override jit] if
       %w[all boot payload mount-root-override jit].include?(only)
+  else
+    selected += %w[materialize-boot] if %w[all materialize-boot].include?(only)
   end
   selected += %w[bad-mount mount-root-malformed override-ungranted] if
     %w[all bad-mount mount-root-malformed override-ungranted].include?(only)
@@ -400,6 +416,30 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
                             { "TEBAKO_RUNTIME_IMAGE" => image })
         expect_exit("bad-mount", out, err, st, 69)
         check("bad-mount: the image is named", err.include?(missing), "stderr: #{err}")
+      when "materialize-boot"
+        # The windows materialize tier (spec 17 §7) — the tier's named
+        # acceptance: the driver extracts the env image to a host tree
+        # and rewires TEBAKO_MOUNT_ROOT, so PYTHONHOME (env-first in the
+        # fs TU) lands on the extracted tree and the interpreter boots
+        # off plain host files. The pre-fix failure was the encodings
+        # fatal with sys.prefix at the baked root.
+        unless File.file?(image)
+          check("materialize-boot", false, "no sibling env image #{image}")
+          next
+        end
+        mat_probe = 'import encodings, sys; print("BOOT-OK"); print("prefix:", sys.prefix)'
+        out, err, st = boot(executable, ["-c", mat_probe], { "TEBAKO_RUNTIME_IMAGE" => image },
+                            timeout: MATERIALIZE_BOOT_TIMEOUT)
+        expect_ok("materialize-boot", out, err, st, "BOOT-OK")
+        check("materialize-boot: the tier announces itself",
+              err.include?("windows materialize tier in effect"), "stderr: #{err}")
+        prefix = out[/^prefix: (.+)$/, 1]
+        check("materialize-boot: sys.prefix is the extracted tree, not the baked root",
+              !prefix.nil? && !prefix.empty? && prefix != platform.mount_root,
+              "stdout: #{out}\nstderr: #{err}")
+        # The proof line for the tier's acceptance record: the rewired
+        # root as the interpreter reported it (the baked root is A:/t).
+        puts "     materialize-boot: sys.prefix=#{prefix}"
       when "mount-root-override"
         override = File.join(dir, "override-root")
         out, err, st = boot(executable, ["-c", probe],
