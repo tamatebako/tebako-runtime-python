@@ -103,6 +103,11 @@ $LOAD_PATH.unshift(File.join(REPO_ROOT, "build", "lib"))
 require "tebako_python_builder"
 
 BOOT_TIMEOUT = 60
+# The materialize tier's first boot extracts the whole env image to the
+# exec cache (spec 17 §7) — thousands of files, hashed in flight, on a
+# Defender-scanned windows runner. The scenario's deadline is wider; a
+# cache-hit boot is nowhere near it.
+MATERIALIZE_BOOT_TIMEOUT = 300
 IMAGE_SUFFIXES = %w[.tfs .dwarfs].freeze
 MARKER_SUFFIXES = %w[.abi .sha256 .origin .yaml .dll].freeze
 NON_EXECUTABLE_SUFFIXES = (IMAGE_SUFFIXES + MARKER_SUFFIXES).freeze
@@ -168,7 +173,7 @@ end
 
 # --- scenario drivers ------------------------------------------------------
 
-def boot(executable, argv, env_extra)
+def boot(executable, argv, env_extra, timeout: BOOT_TIMEOUT)
   Dir.mktmpdir("tebako-python-boot-smoke") do |cwd|
     env = ENV_SCRUBBED.to_h { |key| [key, nil] }
     ENV.each_key { |key| env[key] = nil if key.start_with?("TEBAKO_") }
@@ -183,7 +188,7 @@ def boot(executable, argv, env_extra)
     Open3.popen3(env, executable, *argv, chdir: cwd) do |stdin, stdout, stderr, wait_thr|
       stdin.close
       readers = [stdout, stderr].map { |io| Thread.new { io.read } }
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + BOOT_TIMEOUT
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
       loop do
         break if wait_thr.join(0.1)
         next unless Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
@@ -191,7 +196,7 @@ def boot(executable, argv, env_extra)
         Process.kill("KILL", wait_thr.pid)
         wait_thr.join
         readers.each(&:kill)
-        return ["", "boot_smoke: runtime did not exit within #{BOOT_TIMEOUT}s (hard-killed)", nil]
+        return ["", "boot_smoke: runtime did not exit within #{timeout}s (hard-killed)", nil]
       end
       out, err = readers.map(&:value)
       status = wait_thr.value
@@ -423,7 +428,8 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
           next
         end
         mat_probe = 'import encodings, sys; print("BOOT-OK"); print("prefix:", sys.prefix)'
-        out, err, st = boot(executable, ["-c", mat_probe], { "TEBAKO_RUNTIME_IMAGE" => image })
+        out, err, st = boot(executable, ["-c", mat_probe], { "TEBAKO_RUNTIME_IMAGE" => image },
+                            timeout: MATERIALIZE_BOOT_TIMEOUT)
         expect_ok("materialize-boot", out, err, st, "BOOT-OK")
         check("materialize-boot: the tier announces itself",
               err.include?("windows materialize tier in effect"), "stderr: #{err}")
