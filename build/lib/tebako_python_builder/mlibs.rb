@@ -28,10 +28,11 @@
 module TebakoPythonBuilder
   # The tebako link line for the CPython exe link (the BUILDPYTHON recipe's
   # appended $(TEBAKO_LIBS)) plus the MODLIBS rewrites that force the
-  # static extension set's deps (openssl, zlib) to STATIC archives. The
-  # tebako-runtime-ruby Mlibs port, reduced to python's dependency set
-  # (the disabled-extension list in PythonBuild is why the ruby factory's
-  # readline/ncurses/gdbm/ffi/yaml tail has no analog here).
+  # static extension set's deps (openssl, zlib) — and the msys _ctypes
+  # build's libffi — to STATIC archives. The tebako-runtime-ruby Mlibs
+  # port, reduced to python's dependency set (the disabled-extension list
+  # in PythonBuild is why the ruby factory's readline/ncurses/gdbm/yaml
+  # tail has no analog here).
   #
   # Two mechanisms, one goal (the exe is self-contained past libc/libm):
   #
@@ -88,21 +89,32 @@ module TebakoPythonBuilder
     # The generated-Makefile variable rewrites forcing the static
     # extensions' deps to absolute archive paths.
     def modlib_rewrites
-      {
+      rewrites = {
         "MODULE__SSL_LDFLAGS" => "#{static_lib("ssl")} #{static_lib("crypto")}",
         "MODULE__HASHLIB_LDFLAGS" => static_lib("crypto"),
         "MODULE_ZLIB_LDFLAGS" => static_lib("z"),
         "MODULE_BINASCII_LDFLAGS" => static_lib("z")
       }
+      # _ctypes is msys-only (PythonBuild::MSYS_ENABLED_MODULES); its
+      # libffi binds statically for the same audience-rule reason — a
+      # shared libffi-*.dll would be a runtime dependency a bare windows
+      # machine cannot satisfy. The rewrite is gated so POSIX builds (no
+      # _ctypes, no libffi in the containers) never resolve the archive.
+      # The ole32/oleaut32/uuid tail is configure's win32 CTYPES_LIBS
+      # (ctypes' COM utilities) — ever-present system DLLs, kept verbatim.
+      if @platform.msys?
+        rewrites["MODULE__CTYPES_LDFLAGS"] = "#{static_lib("ffi")} -lole32 -loleaut32 -luuid"
+      end
+      rewrites
     end
 
-    # The static archive path for one of the exe's own extension deps
-    # (ssl/crypto/z). macOS resolves from the Homebrew keg (the toolchain
+    # The static archive path for one of the extension deps (ssl/crypto/z,
+    # ffi on msys). macOS resolves from the Homebrew keg (the toolchain
     # default search never sees a keg-only formula); every other leg asks
     # the C toolchain's own search path (`cc -print-file-name`), so the
-    # archive the exe binds is the one the platform's compiler would have
-    # chosen. An unresolved archive is a named build error, never a silent
-    # dynamic bind.
+    # archive bound is the one the platform's compiler would have chosen.
+    # An unresolved archive is a named build error, never a silent dynamic
+    # bind.
     def static_lib(name)
       if @platform.macos?
         package = name == "z" ? "zlib" : "openssl@3"
@@ -114,8 +126,8 @@ module TebakoPythonBuilder
       return path if File.file?(path)
 
       raise TebakoPythonBuilder::Error.new(
-        "no static lib#{name}.a resolvable on this platform (#{path}) — the exe must bind " \
-        "openssl/zlib statically (a runtime .so dependency breaks the audience rule)", 112
+        "no static lib#{name}.a resolvable on this platform (#{path}) — the runtime must bind " \
+        "its extension deps statically (a runtime .so/.dll dependency breaks the audience rule)", 112
       )
     end
 

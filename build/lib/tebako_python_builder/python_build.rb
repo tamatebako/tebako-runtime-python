@@ -46,8 +46,10 @@ module TebakoPythonBuilder
   #     static openssl/zlib (Mlibs);
   #   * Modules/Setup.local pins the static extension set (_ssl _hashlib
   #     zlib binascii) and the deterministic *disabled* list (the
-  #     host-asymmetric extensions: _bz2 _lzma _sqlite3 _ctypes readline
-  #     _curses _gdbm _dbm nis _tkinter _uuid — the v1 hermetic core;
+  #     host-asymmetric extensions: _bz2 _lzma _sqlite3 readline _curses
+  #     _gdbm _dbm nis _tkinter _uuid, plus _ctypes on POSIX — the v1
+  #     hermetic core; MSYS_ENABLED_MODULES re-enables _ctypes on
+  #     windows-msys, where payloads reach host DLLs through it;
   #     everything else configure-detected dynamic rides the image).
   #
   # Makefile.pre is the durable substitution target: makesetup regenerates
@@ -66,6 +68,16 @@ module TebakoPythonBuilder
                       "zlib zlibmodule.c", "binascii binascii.c"].freeze
     DISABLED_MODULES = %w[_bz2 _lzma _sqlite3 _ctypes _ctypes_test readline
                           _curses _curses_panel _gdbm _dbm nis _tkinter _uuid].freeze
+
+    # The windows-msys build re-enables these members of the v1 disabled
+    # set: windows payloads reach host DLLs through ctypes, and upstream's
+    # unpatched libffi detection builds _ctypes clean against the ucrt64
+    # libffi package (the shape msys2's own python ships — no source
+    # patch needed). The extension rides the image as a dynamic module
+    # with libffi STATICALLY bound (Mlibs' MODULE__CTYPES_LDFLAGS rewrite
+    # — a shared libffi-*.dll dependency would break the audience rule).
+    # POSIX legs keep the v1 hermetic core.
+    MSYS_ENABLED_MODULES = %w[_ctypes].freeze
 
     MARKER = "# --- tebako: the fs TU + driver link (factory substitution) ---"
 
@@ -224,7 +236,7 @@ module TebakoPythonBuilder
         "*static*",
         *STATIC_MODULES,
         "*disabled*",
-        *DISABLED_MODULES,
+        *(DISABLED_MODULES - (@platform.msys? ? MSYS_ENABLED_MODULES : [])),
         ""
       ]
       File.write(File.join(src_dir, "Modules", "Setup.local"), lines.join("\n"))

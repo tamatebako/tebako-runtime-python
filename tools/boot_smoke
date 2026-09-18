@@ -54,10 +54,12 @@
 #                        env image grants windows_boot: materialize, so
 #                        the driver extracts it to a host tree and
 #                        rewires TEBAKO_MOUNT_ROOT; the interpreter
-#                        starts (encodings imports at init), the tier
-#                        announces itself on stderr, and sys.prefix is
-#                        the extracted tree — NEVER the baked root
-#                        [windows]
+#                        starts (encodings imports at init), the
+#                        DLL-backed extensions import (_ctypes off the
+#                        extracted tree, _ssl off the exe's static
+#                        openssl), the tier announces itself on stderr,
+#                        and sys.prefix is the extracted tree — NEVER
+#                        the baked root                            [windows]
 #   mount-root-override  TEBAKO_MOUNT_ROOT=<abs>: boots, sys.prefix ==
 #                        the override (the image grants it)      [POSIX]
 #   mount-root-malformed TEBAKO_MOUNT_ROOT=relative/path -> exit 65
@@ -427,12 +429,24 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
           check("materialize-boot", false, "no sibling env image #{image}")
           next
         end
-        mat_probe = 'import encodings, sys; print("BOOT-OK"); print("prefix:", sys.prefix)'
+        mat_probe = <<~PY
+          import ctypes, encodings, ssl, sys
+          import _ctypes
+          print("BOOT-OK")
+          print("prefix:", sys.prefix)
+          print("ctypes:", ctypes.sizeof(ctypes.c_void_p))
+          print("ssl:", ssl.OPENSSL_VERSION)
+        PY
         out, err, st = boot(executable, ["-c", mat_probe], { "TEBAKO_RUNTIME_IMAGE" => image },
                             timeout: MATERIALIZE_BOOT_TIMEOUT)
         expect_ok("materialize-boot", out, err, st, "BOOT-OK")
         check("materialize-boot: the tier announces itself",
               err.include?("windows materialize tier in effect"), "stderr: #{err}")
+        # The two DLL-backed extension classes: _ctypes reads its .pyd
+        # off the extracted tree (the image's lib/ is the nt getpath's
+        # platstdlib), _ssl rides the exe's static openssl.
+        check("materialize-boot: the extension modules import (_ctypes, _ssl)",
+              out.include?("ctypes:") && out.include?("ssl:"), "stdout: #{out}\nstderr: #{err}")
         prefix = out[/^prefix: (.+)$/, 1]
         check("materialize-boot: sys.prefix is the extracted tree, not the baked root",
               !prefix.nil? && !prefix.empty? && prefix != platform.mount_root,
@@ -440,6 +454,9 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         # The proof line for the tier's acceptance record: the rewired
         # root as the interpreter reported it (the baked root is A:/t).
         puts "     materialize-boot: sys.prefix=#{prefix}"
+        %w[ctypes ssl].each do |marker|
+          puts "     materialize-boot: #{marker}=#{out[/^#{marker}: (.+)$/, 1]}"
+        end
       when "mount-root-override"
         override = File.join(dir, "override-root")
         out, err, st = boot(executable, ["-c", probe],
