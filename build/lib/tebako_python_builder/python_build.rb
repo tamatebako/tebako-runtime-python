@@ -100,6 +100,7 @@ module TebakoPythonBuilder
 
     def run
       extract
+      gate_msys_socket_selectability if @platform.msys?
       gate_jit_toolchain if @python.jit?
       write_setup_local
       configure
@@ -218,6 +219,39 @@ module TebakoPythonBuilder
       File.write(marker, "#{@src_sha256}\n")
     end
 
+    # The msys socket-selectability gate (windows builds only). Upstream
+    # guards the "any socket fd can be select()-ed" definition of
+    # _PyIsSelectable_fd (Include/internal/pycore_fileutils.h) with
+    # _MSC_VER alone; under the ucrt64 gcc the macro falls to its POSIX
+    # branch — (unsigned)fd < FD_SETSIZE — and a Winsock SOCKET handle,
+    # an opaque kernel value that lands far past FD_SETSIZE in any real
+    # process, fails it. socketmodule.c's internal_connect then never
+    # enters its wait engine (IS_SELECTABLE is a conjunct of
+    # wait_connect) and every positive-timeout connect — pip's vendored
+    # urllib3 connect among them — surfaces the stale WSAEWOULDBLOCK
+    # (10035) the in-flight connect left behind, instantly. tamatebako/
+    # python widened the guard to MS_WINDOWS (the 0040 port,
+    # pycore_fileutils_msys); a windows runtime built from a source
+    # release predating it is broken by construction, so a pre-fix pin
+    # is a named error HERE — never a leg that reds three layers later
+    # at the boot smoke's socket-timeout scenario.
+    def gate_msys_socket_selectability
+      header = File.join(src_dir, "Include", "internal", "pycore_fileutils.h")
+      lines = File.readlines(header)
+      anchor = lines.index { |line| line.include?("#define _PyIsSelectable_fd(FD) (1)") }
+      guard = anchor && lines[0...anchor].reverse.find { |line| line =~ /^#if/ }
+      return if guard&.include?("MS_WINDOWS")
+
+      raise TebakoPythonBuilder::Error.new(
+        "the pinned source lacks the mingw _PyIsSelectable_fd carve-out — Include/internal/" \
+        "pycore_fileutils.h guards the (1) definition with #{guard&.strip || "no #if"} (upstream's " \
+        "_MSC_VER-only shape), so under ucrt64 gcc socket-timeout connects on handles >= FD_SETSIZE " \
+        "die instantly (WinError 10035, the msys pip connect pathology). Bump contract.yml's " \
+        "source_release to the tamatebako/python release carrying the MS_WINDOWS widening " \
+        "(the pycore_fileutils_msys patch)", 107
+      )
+    end
+
     # The extraction staging dir (sibling of the build trees; extract
     # reclaims it before every unpack and removes it after the rename).
     def staging_parent
@@ -289,29 +323,25 @@ module TebakoPythonBuilder
     # static archive there is discarded as unneeded); configure prepends
     # its own finds, so this pair stays last. The ruby factory's proven
     # recipe (its Mlibs::MSYS_DLL_LIBRARIES).
-    # ac_cv_func_poll=no: CPython's socket-timeout wait engine
-    # (Modules/socketmodule.c internal_select) prefers poll() whenever
-    # configure defines HAVE_POLL. On mingw-w64 the generic
-    # AC_CHECK_FUNC(poll) probe passes against the CRT's poll emulation,
-    # so the default msys build routes EVERY positive-timeout socket
-    # operation — pip's vendored urllib3 connect (settimeout(15)) among
-    # them — through that emulation; no mainstream Windows CPython
-    # exercises it (MSVC's pyconfig never defines HAVE_POLL; python.org
-    # builds wait with winsock select()). In the driver-linked runtime
-    # the emulation mis-reports for the WSA SOCKET handle: every
-    # positive-timeout connect died INSTANTLY with WinError 10035 — the
-    # stale WSAGetLastError the just-failed connect left, raised through
-    # sock_call_ex's errorhandler after internal_select mis-reported —
-    # while blocking-mode urlopen (which never enters the wait) reached
-    # pypi.org from the same runtime (the xml2rfc windows leg's pip
-    # storm: runs 35326025152 @ v0.2.2 / 35334306542 @ v0.2.3). The
-    # autoconf cache override skips the probe, HAVE_POLL stays
-    # undefined, and socketmodule/_ssl/selectmodule compile the
-    # winsock-select shape the MSVC platform has shipped for decades
-    # (select.poll absent — also the python.org windows shape; the msys
-    # select module links -lws2_32 via the source series' 0074).
-    # tools/socket_probe.py pins the connect modes per build (the
-    # boot smoke's socket-timeout scenario, windows legs).
+    # ac_cv_func_poll=no: with HAVE_POLL undefined, socketmodule.c's
+    # socket-timeout machinery compiles the winsock-select shape the MSVC
+    # platform has always shipped (internal_select waits via select();
+    # select.poll absent — also the python.org windows shape; the msys
+    # select module links -lws2_32 via the source series' 0074). With
+    # HAVE_POLL defined — the mingw default, since the generic
+    # AC_CHECK_FUNC(poll) probe passes against the CRT's poll() emulation
+    # — the wait engine routed through that emulation, and every
+    # positive-timeout socket operation died instantly with WinError
+    # 10035 in the driver-linked runtime: pip's vendored urllib3 connect
+    # (settimeout(15)) storms retries, while blocking-mode urlopen (which
+    # never enters the wait engine) reaches pypi.org from the same
+    # runtime (the xml2rfc windows leg's pip storm: runs 35326025152 @
+    # v0.2.2 / 35334306542 @ v0.2.3). The override is HALF the fix — the
+    # other half is gate_msys_socket_selectability's source requirement
+    # (the mingw _PyIsSelectable_fd carve-out); tools/socket_probe.py
+    # pins the connect modes per build (the boot smoke's socket-timeout
+    # scenario, windows legs) and its windows-leg run drove this backend
+    # choice: the winsock select() wait is the one proven working there.
     # Everywhere else the system openssl/zlib are found by the default
     # detection (the containers ship libssl-dev/zlib1g-dev,
     # openssl-dev/zlib-static, pacman openssl).
