@@ -437,6 +437,9 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         check("materialize-boot: sys.prefix is the extracted tree, not the baked root",
               !prefix.nil? && !prefix.empty? && prefix != platform.mount_root,
               "stdout: #{out}\nstderr: #{err}")
+        # The proof line for the tier's acceptance record: the rewired
+        # root as the interpreter reported it (the baked root is A:/t).
+        puts "     materialize-boot: sys.prefix=#{prefix}"
       when "mount-root-override"
         override = File.join(dir, "override-root")
         out, err, st = boot(executable, ["-c", probe],
