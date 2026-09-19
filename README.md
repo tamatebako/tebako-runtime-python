@@ -116,6 +116,53 @@ grants no windows boot tier — see the windows boundary below).
   extensions in `lib-dynload` (`lib/` on windows), mounted with the
   stdlib.
 
+## The windows-msys configure shape
+
+Two upstream-source facts shape the msys build's socket-timeout behavior
+(`Modules/socketmodule.c`, `Include/internal/pycore_fileutils.h`):
+
+- **The wait backend.** CPython's socket-timeout wait engine
+  (`internal_select`) prefers `poll()` whenever `HAVE_POLL` is defined,
+  and on mingw-w64 the generic `AC_CHECK_FUNC(poll)` probe passes
+  against the CRT's `poll()` emulation. In the driver-linked runtime
+  that backend failed every positive-timeout socket operation — pip's
+  vendored urllib3 connect (`settimeout(15)`) surfaced instantly as
+  `[WinError 10035]` while blocking-mode sockets worked — so the msys
+  leg passes `ac_cv_func_poll=no` into configure
+  (`PythonBuild#configure_env`): `HAVE_POLL` stays undefined and the
+  engine compiles the winsock-select shape the MSVC platform has always
+  shipped (`select.poll` absent — also the python.org windows shape).
+- **The selectability gate.** With `HAVE_POLL` undefined,
+  `IS_SELECTABLE` falls to `_PyIsSelectable_fd(fd) || timeout <= 0`, and
+  upstream guards the "any socket fd can be select()-ed" `(1)`
+  definition with `_MSC_VER` alone — under gcc it degrades to the POSIX
+  `fd < FD_SETSIZE` check, which a WSA `SOCKET` handle (an opaque value
+  far past `FD_SETSIZE` in any real process) fails, so
+  `internal_connect` never waits at all and every positive-timeout
+  connect dies instantly with the same `10035`. The source factory
+  widened the guard to `MS_WINDOWS` (the `pycore_fileutils_msys`
+  patch), and `PythonBuild#gate_msys_socket_selectability` refuses to
+  build a windows runtime from a source release predating it — a named
+  error at extract time, never a leg that reds later at the boot smoke.
+  Both halves are required; the boot smoke's `socket-timeout` scenario
+  (`tools/socket_probe.py`) pins the connect modes per build (blocking
+  urlopen, positive-timeout `create_connection`, raw non-blocking
+  `connect_ex` + select-wait), and runs under any interpreter for
+  comparison, including a plain msys2 python.
+
+## The -E flag on windows
+
+`-E`/`-I` make getpath ignore the environment — the only channel the
+windows materialize tier's rewired runtime root rides (`PYTHONHOME`,
+set by the fs TU from the driver's effective root). Under `-E` the boot
+falls back to the baked prefix (`A:/t`), finds no stdlib on the host,
+and dies on the encodings import (`stdlib dir = 'A:\t\Lib'`); POSIX
+never hits this (the preload shim serves the VFS at the baked root
+path, so `-E` boots there). The fs TU therefore refuses `-E`/`-I` in
+the handed-off argv on the materialize tier — exit 2, the mechanism
+named on stderr — instead of the cryptic init death. Environment
+hygiene for a tebako runtime invocation belongs to the invoking shell.
+
 ## site-packages and pip
 
 The env image ships the stdlib plus a **declarative site-packages
