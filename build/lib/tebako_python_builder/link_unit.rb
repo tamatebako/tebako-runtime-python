@@ -140,7 +140,7 @@ module TebakoPythonBuilder
 
     def complete?(dir)
       REQUIRED_FILES.all? { |f| File.size?(File.join(dir, f)) } &&
-        !Dir.glob(File.join(dir, "closure", "*.a")).empty? &&
+        (limnifs_only? || !Dir.glob(File.join(dir, "closure", "*.a")).empty?) &&
         (preload_shim_name.nil? || File.size?(File.join(dir, preload_shim_name)))
     end
 
@@ -150,7 +150,7 @@ module TebakoPythonBuilder
 
         raise TebakoPythonBuilder::Error.new("downloaded link unit #{asset_name} lacks #{f}", 124)
       end
-      if Dir.glob(File.join(dir, "closure", "*.a")).empty?
+      if !limnifs_only? && Dir.glob(File.join(dir, "closure", "*.a")).empty?
         raise TebakoPythonBuilder::Error.new("downloaded link unit #{asset_name} carries no closure/*.a", 124)
       end
       return if preload_shim_name.nil? || File.size?(File.join(dir, preload_shim_name))
@@ -160,6 +160,14 @@ module TebakoPythonBuilder
         "runtime cannot see its mounted image without the preload shim (the LINKED-driver " \
         "re-exec, README)", 124
       )
+    end
+
+    # aarch64-windows-gnu ships limnifs-only: the product's stage_link_unit
+    # --limnifs-only branch leaves closure/ empty BY DESIGN (the dwarfs
+    # arm64 closure is upstream dwarfs-t's milestone) — the scoped archives
+    # reference no closure symbols on that target.
+    def limnifs_only?
+      @pid == "aarch64-windows-gnu"
     end
   end
 end
