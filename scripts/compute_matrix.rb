@@ -79,6 +79,23 @@
 #                                 tamatebako/tebako release.yml's
 #                                 matrix.platform).
 #
+# The windows/arm64 leg carries two gates, both LOUD (the no-jit /
+# no-scenario-asset precedents below — a skipped leg names its unmet
+# condition, never silently disappears):
+#   1. the artifact gate (every run): the pinned link-unit release must
+#      ship the arm64 windows unit (link-unit-<ver>-aarch64-windows-
+#     gnu.tar.gz). Today's product releases ship x86_64-windows-gnu only;
+#      this factory never builds the driver stack from source
+#      (contract.yml's link_unit_release comment), so the leg stays
+#      disabled until the product publishes the unit — then build CI
+#      (push/PR/dispatch) runs it automatically.
+#   2. the publish gate (PUBLISH runs only): a leg can build green and
+#      still not serve — publish.yml's plan and release audit exclude
+#      windows/arm64 until the owner sets the TEBAKO_SERVE_WINDOWS_ARM64
+#      repository variable. The env/pythons outputs derive from the same
+#      walk, so a gated leg cannot half-serve: no expectation of its
+#      packages ever reaches the audit.
+#
 # Named errors, exit 64: an unknown platform/arch filter, an unknown
 # --format, or a matrix.json row outside the known vocabulary is a config
 # bug, never a skipped leg.
@@ -96,6 +113,10 @@ MATRIX_JSON = File.join(REPO_ROOT, ".github", "matrix.json").freeze
 
 PLATFORMS = %w[windows linux-gnu linux-musl macos].freeze
 ARCHES = %w[x86_64 arm64].freeze
+
+# The product repo the link unit + tfs CLI are consumed from (LinkUnit/
+# TfsTool's REPO — the planner's artifact gate reads the same release).
+TEBAKO_RELEASE_REPO = "tamatebako/tebako".freeze
 
 # os/arch -> the tamatebako/tebako release's link-unit platform id.
 # TebakoPythonBuilder::Platform::LINK_UNIT_PIDS is this repo's single
@@ -128,6 +149,9 @@ container_version = contract.fetch("container_version") do
 end
 source_release = contract.fetch("source_release") do
   usage_error "#{CONTRACT_YML} carries no source_release pin"
+end
+link_unit_release = contract.fetch("link_unit_release") do
+  usage_error "#{CONTRACT_YML} carries no link_unit_release pin"
 end
 
 python_filter = ENV.fetch("PYTHON_FILTER", "full")
@@ -179,6 +203,25 @@ windows_buildable = lambda do |base_version|
   windows_sums.key?(TebakoPythonBuilder::SourceFetcher.scenario_asset_name(base_version, MINGW_PLATFORM))
 end
 
+# The arm64 windows leg's artifact gate (lazy, scoped the same way): the
+# pinned link-unit release's published asset names, read off the same
+# release-API digest anchor LinkUnit stages from. An unreadable pinned
+# release is a config-class failure — the windows_sums discipline.
+windows_arm64_unit_assets = nil
+arm64_link_unit_present = lambda do |pid|
+  assets = windows_arm64_unit_assets ||= begin
+    TebakoPythonBuilder::BuildHelpers.release_asset_digests(TEBAKO_RELEASE_REPO, link_unit_release, code: 123)
+  rescue TebakoPythonBuilder::Error => e
+    usage_error "cannot read the pinned link-unit release's assets: #{e.message}"
+  end
+  asset = "link-unit-#{link_unit_release.sub(/\Av/, "")}-#{pid}.tar.gz"
+  assets.key?(asset)
+end
+
+# A PUBLISH run (publish.yml's build+publish mode) serves windows/arm64
+# only when the owner has armed the variable; build CI never consults it.
+publish_run = ENV.fetch("PUBLISH", "") == "true"
+
 legs = []
 selected_env = []
 env.each do |row|
@@ -189,8 +232,8 @@ env.each do |row|
   next unless arch_filter == "all" || arch_filter == arch
 
   host_id = TebakoPythonBuilder::Platform.host_id_for(os, arch)
-  selected_env << row.merge("host_id" => host_id)
   container = row["container"] && "#{row['container']}:#{container_version}"
+  env_admitted = false
   pythons.each do |python|
     line = begin
       TebakoPythonBuilder::PythonVersion.new(python)
@@ -219,12 +262,35 @@ env.each do |row|
     end
     # A windows leg exists only when the pinned source release ships the
     # line's msys2/ucrt64 scenario asset (tamatebako/python's
-    # patches/<line>/ series). POSIX legs are unaffected.
+    # patches/<line>/ series). POSIX legs are unaffected. The scenario
+    # axis is arch-agnostic: the arm64 row consumes the same
+    # windows-msys tree (the series' aarch64 arms are upstream-ported
+    # MSYS2 shapes — pyd_platform_tag/ms_dll_id).
     if os == "windows" && !windows_buildable.call(line.base_version)
       warn "note: #{python} skipped on windows/#{arch} — #{source_release} ships no " \
            "#{TebakoPythonBuilder::SourceFetcher.scenario_asset_name(line.base_version, MINGW_PLATFORM)} " \
            "(the line's msys2/ucrt64 series lands in a later tamatebako/python release)"
       next
+    end
+    # The windows/arm64 gates (see the header): first the artifact
+    # reality — the pinned link-unit release must publish the arm64
+    # windows unit, or the leg would die mid-build at the LinkUnit stage
+    # (a source-build fallback for the driver stack does not exist) —
+    # then the owner's publish enablement on PUBLISH runs. Both notes
+    # name their unmet condition exactly.
+    if os == "windows" && arch == "arm64"
+      pid = LINK_UNIT_PID.fetch([os, arch])
+      unless arm64_link_unit_present.call(pid)
+        warn "note: #{python} skipped on windows/#{arch} — #{TEBAKO_RELEASE_REPO} #{link_unit_release} ships no " \
+             "link-unit-#{link_unit_release.sub(/\Av/, "")}-#{pid}.tar.gz (the arm64 windows link unit; " \
+             "the leg stays disabled until the product publishes it)"
+        next
+      end
+      if publish_run && ENV.fetch("TEBAKO_SERVE_WINDOWS_ARM64", "") != "true"
+        warn "note: #{python} skipped on windows/#{arch} — the publish gate is OFF " \
+             "(arm the TEBAKO_SERVE_WINDOWS_ARM64 repository variable to serve windows/arm64 releases)"
+        next
+      end
     end
     legs << {
       python: python,
@@ -242,6 +308,16 @@ env.each do |row|
       container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])
     }
+    # The env row joins the expectations only when the row EMITTED a leg:
+    # the audit reads EXPECTED_ENV_MATRIX x EXPECTED_PYTHON_MATRIX, so a
+    # gated row must not survive into env (its pythons are leg-derived
+    # already — a row without legs would manufacture expectations for
+    # packages no leg built). matrix/env/pythons all derive from the
+    # same filtered walk.
+    unless env_admitted
+      selected_env << row.merge("host_id" => host_id)
+      env_admitted = true
+    end
   end
 end
 

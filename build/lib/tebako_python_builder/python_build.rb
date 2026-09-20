@@ -487,7 +487,7 @@ module TebakoPythonBuilder
       if @platform.macos?
         @platform.brew_prefix("openssl@3")
       elsif @platform.msys?
-        "/ucrt64"
+        "/#{@platform.msys_env}"
       else
         "/usr"
       end

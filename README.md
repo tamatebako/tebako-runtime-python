@@ -13,7 +13,10 @@ implemented in `build/lib/tebako_python_builder/` and wired into CI
 (`build-*.yml` × 4 over `_build-platform.yml`, the ruby factory's
 coordinator shape; `publish.yml` carries the release machinery via
 `scripts/upload_release.rb`). The matrix is green end to end —
-linux-gnu / linux-musl / macos (x86_64 + arm64) and windows-ucrt64. The
+linux-gnu / linux-musl / macos (x86_64 + arm64) and windows-ucrt64.
+A windows/arm64 leg (windows-11-arm + msys2 clangarm64) is wired but
+disabled until the product publishes its link unit and the owner arms
+its serving variable (the matrix grammar section below). The
 boot smoke asserts imports of json/ssl/zlib off the mounted image, the
 dlopen extension path, and the `TEBAKO_MOUNT_ROOT` 65/78 parity cases
 on POSIX, and the materialize boot (spec 17 §7) + bare + named-error
@@ -261,7 +264,8 @@ artifacts flow downward).
 
 ## Matrix grammar
 
-Same grammar as the ruby factory. Seven legs: every (python × env) cross
+Same grammar as the ruby factory. Eight env rows: every (python × env)
+cross
 of the catalog under the dispatch filters
 (`python_filter=full|tidy|catalog|<list>`, `platform=all|windows|
 linux-gnu|linux-musl|macos`, `arch_filter=all|x86_64|arm64`).
@@ -275,6 +279,7 @@ linux-gnu|linux-musl|macos`, `arch_filter=all|x86_64|arm64`).
 | macos | x86_64 | macos-15-intel | — (runner-native) | macos-x86_64 |
 | macos | arm64 | macos-14 | — (runner-native) | macos-arm64 |
 | windows (ucrt64) | x86_64 | windows-2022 | — (runner-native) | x86_64-windows-gnu |
+| windows (clangarm64) | arm64 | windows-11-arm | — (runner-native) | aarch64-windows-gnu (not yet published — see below) |
 
 Containers come from
 [tebako-ci-containers](https://github.com/tamatebako/tebako-ci-containers)
@@ -284,6 +289,34 @@ alpine-based musl image cannot host node actions, so no job-level
 `container:`). The version catalog lives in `contract.yml` (the SSOT),
 the env vocabulary in `.github/matrix.json` — versions, tags, and SHAs
 never appear in workflow YAML.
+
+### The windows/arm64 leg — wired, publish-gated OFF
+
+The second windows row rides the `windows-11-arm` hosted runner and
+msys2's native **clangarm64** environment (triple
+`aarch64-w64-mingw32`; the x64 legs stay on ucrt64 unchanged). The leg
+cannot serve a release yet, and two gates keep that honest:
+
+1. **The artifact gate (every run).** A build consumes the driver stack
+   from the pinned `link_unit_release` — and no tamatebako/tebako
+   release publishes an arm64 windows link unit yet
+   (`link-unit-<version>-aarch64-windows-gnu.tar.gz`; today's releases
+   ship `x86_64-windows-gnu` only). The matrix planner skips the leg
+   with a loud note naming the exact missing asset — the factory never
+   builds the driver stack from source. When a product release
+   publishes the unit, the leg builds automatically in build CI
+   (push/PR/dispatch), natively, boot smoke included.
+2. **The publish gate (publish runs only).** A green build still does
+   not serve: `publish.yml`'s plan and release audit exclude
+   windows/arm64 until the repository variable
+   `TEBAKO_SERVE_WINDOWS_ARM64` is `true`. The gate derives the
+   publish matrix and the audit expectations from the same walk, so a
+   gated leg cannot half-serve a release.
+
+The package name rides the product's reserved release-asset spelling
+(`windows-ucrt-arm64` — the `aarch64-windows-ucrt` triplet, which the
+product parses but rejects in served payload manifests until the
+platform ships).
 
 ## contract.yml — the pins
 
