@@ -85,7 +85,11 @@ container_version: "v1"
 # v2.3.2 → v2.8.9 arc also brings the ruby factory's proven v2.8.x
 # driver line (the spec-33 runtime-on-runtime composition, arscope
 # dedupe, mount-boundary synthesis). Contract unchanged (2).
-link_unit_release: "v2.8.12"
+# v2.8.13 (tebako#639): the aarch64-windows-gnu link unit joins the
+# product release — the arm64 leg's input (arscope carries the gnullvm
+# import sets: undefined section symbols + short-form members).
+# Contract unchanged (2).
+link_unit_release: "v2.8.13"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
