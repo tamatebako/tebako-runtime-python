@@ -72,6 +72,17 @@ RSpec.describe TebakoPythonBuilder::Platform do
       expect(described_class.new("aarch64-w64-mingw32", "aarch64").msys_env).to eq("clangarm64")
     end
 
+    it "follows the declared arch over the emulated tooling's self-report (windows-11-arm)" do
+      # The msys tooling ruby on a windows-11-arm runner is the emulated
+      # x64 build: RUBY_PLATFORM/host_cpu say x86_64. The leg's declared
+      # arch (build_runtime --arch) must still key the arm64 environment,
+      # link-unit pid, and package name.
+      emulated = described_class.new("x64-mingw-ucrt", "arm64")
+      expect(emulated.msys_env).to eq("clangarm64")
+      expect(emulated.host_id).to eq("windows-ucrt-arm64")
+      expect(emulated.link_unit_pid).to eq("aarch64-windows-gnu")
+    end
+
     it "fails named (112) on a POSIX host" do
       expect { described_class.new("x86_64-pc-linux-gnu", "x86_64").msys_env }
         .to raise_error(TebakoPythonBuilder::Error) { |e| expect(e.error_code).to eq(112) }

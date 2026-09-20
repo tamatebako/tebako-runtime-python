@@ -297,7 +297,11 @@ jobs:
         run: |
           git config --global core.longpaths true
           rc=0
-          tools/build_runtime --python "${{ matrix.python }}" || rc=$?
+          # --arch: the leg's declared arch. The msys tooling ruby on a
+          # windows-11-arm runner is the emulated x64 build — its
+          # host_cpu self-report (x86_64) would mis-key the msys2
+          # environment, the link-unit pid, and the package name.
+          tools/build_runtime --python "${{ matrix.python }}" --arch "${{ matrix.arch }}" || rc=$?
           # 107 = the msys socket-selectability gate (PythonBuild): the
           # pinned source_release predates the mingw _PyIsSelectable_fd
           # carve-out, so no windows runtime can honestly build from it.
