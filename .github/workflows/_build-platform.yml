@@ -419,9 +419,11 @@ jobs:
       # The leg's workspace, kept for a day as build diagnostics: one
       # artifact per (platform, arch, python) leg. The publish stage
       # below reads runtime-packages/ in place — since the de-rendezvous
-      # (spec 13 §2a) nothing downloads this artifact anymore.
+      # (spec 13 §2a) nothing downloads this artifact anymore. Uploads
+      # even when the build or boot smoke failed (always()) — a red leg's
+      # packages are exactly the ones worth diagnosing.
       - name: Upload the runtime packages
-        if: matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true'
+        if: ${{ always() && (matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.python }}
