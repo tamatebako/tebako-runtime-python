@@ -69,7 +69,7 @@
 #   tools/build_runtime --python 3.13.15 [--output PATH] [--prefix DIR]
 #                       [--tebako-version X.Y.Z] [--src-release TAG]
 #                       [--src-mirror URL] [--link-unit-release TAG]
-#                       [--link-unit-pid PID] [--jobs N]
+#                       [--link-unit-pid PID] [--arch ARCH] [--jobs N]
 
 require "optparse"
 
@@ -87,6 +87,7 @@ options = {
   src_mirror: nil,
   link_unit_release: nil,
   link_unit_pid: nil,
+  arch: nil,
   jobs: nil
 }
 
@@ -111,6 +112,9 @@ parser = OptionParser.new do |opts|
   end
   opts.on("--link-unit-pid PID", "The product release's platform id for the link-unit asset " \
                                  "(default: the detected host's)") { |v| options[:link_unit_pid] = v }
+  opts.on("--arch ARCH", "The leg's declared target arch (x86_64 | arm64) — pass it on emulated " \
+                         "tooling (the msys x64 ruby on windows-11-arm self-reports x86_64); " \
+                         "default: the tooling process's self-report") { |v| options[:arch] = v }
   opts.on("-j", "--jobs N", Integer, "Build parallelism (default: detected core count)") { |v| options[:jobs] = v }
   opts.on("-h", "--help", "Print this help") do
     puts opts
@@ -137,7 +141,8 @@ begin
     src_release: options[:src_release],
     src_mirror: options[:src_mirror],
     link_unit_release: options[:link_unit_release],
-    link_unit_pid: options[:link_unit_pid]
+    link_unit_pid: options[:link_unit_pid],
+    arch: options[:arch]
   )
   builder.run
 rescue TebakoPythonBuilder::Error => e

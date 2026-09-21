@@ -46,7 +46,7 @@ module TebakoPythonBuilder
 
     def initialize(repo_root:, python_version:, tebako_version:, prefix:, output:, # rubocop:disable Metrics/ParameterLists,Metrics/MethodLength
                    jobs: nil, src_release: nil, src_mirror: nil,
-                   link_unit_release: nil, link_unit_pid: nil)
+                   link_unit_release: nil, link_unit_pid: nil, arch: nil)
       @repo_root = repo_root
       @python_version = python_version
       @python = TebakoPythonBuilder::PythonVersion.new(python_version)
@@ -59,7 +59,11 @@ module TebakoPythonBuilder
       @src_mirror = src_mirror
       @link_unit_release = link_unit_release || contract.link_unit_release
       @link_unit_pid = link_unit_pid
-      @platform = TebakoPythonBuilder::Platform.new
+      # The leg's DECLARED arch beats the tooling process's self-report:
+      # under emulation (the msys x64 ruby on a windows-11-arm runner)
+      # host_cpu lies, and every arch-keyed decision (the msys2
+      # environment, the link-unit pid, the package name) follows the lie.
+      @platform = arch ? TebakoPythonBuilder::Platform.new(RUBY_PLATFORM, arch) : TebakoPythonBuilder::Platform.new
     end
 
     def run # rubocop:disable Metrics/MethodLength

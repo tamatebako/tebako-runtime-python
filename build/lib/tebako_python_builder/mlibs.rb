@@ -60,9 +60,10 @@ module TebakoPythonBuilder
     # MSYS_DLL_LIBRARIES — Rust std's windows references the mingw-ld
     # probe proved (RtlNtStatusToDosError -> ntdll,
     # GetUserProfileDirectoryW -> userenv, GetProcessMemoryInfo -> psapi)
-    # plus the win32 default set; the C++ runtime statically.
+    # plus the win32 default set. The C++ runtime heads the tail via
+    # msys_cxx_runtime (the set differs per msys2 environment).
     MSYS_SYSTEM_LIBRARIES = [
-      "-l:libstdc++.a", "-static-libgcc", "-static-libstdc++", "-l:libwinpthread.a",
+      "-static-libgcc", "-l:libwinpthread.a",
       "-lshell32", "-lws2_32", "-lwsock32", "-liphlpapi",
       "-limagehlp", "-lshlwapi", "-lbcrypt", "-lcrypt32",
       "-ladvapi32", "-luser32", "-lole32", "-loleaut32",
@@ -184,7 +185,22 @@ module TebakoPythonBuilder
     def msys_libs
       (["-Wl,--start-group"] + uncovered_libraries + ["-Wl,--end-group"] +
        [static_lib("ssl"), static_lib("crypto"), static_lib("z")] +
-       MSYS_SYSTEM_LIBRARIES).join(" ")
+       msys_cxx_runtime + MSYS_SYSTEM_LIBRARIES).join(" ")
+    end
+
+    # The C++ runtime, keyed on the msys2 environment (Platform#msys_env):
+    # ucrt64 is a gcc toolchain (libstdc++.a + the -static-libstdc++ driver
+    # flag); clangarm64 (windows/arm64) is the llvm toolchain — libc++.a +
+    # libc++abi.a + libunwind.a, and no libstdc++.a at all (a hardcoded
+    # -l:libstdc++.a there dies at the python.exe link with lld's "unable
+    # to find library" — run 35530044014). -static-libgcc stays in the
+    # shared tail: clang maps it to the compiler-rt builtins.
+    def msys_cxx_runtime
+      if @platform.msys_env == "ucrt64"
+        ["-l:libstdc++.a", "-static-libstdc++"]
+      else
+        ["-l:libc++.a", "-l:libc++abi.a", "-l:libunwind.a"]
+      end
     end
   end
 end

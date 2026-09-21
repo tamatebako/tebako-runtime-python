@@ -142,6 +142,17 @@ jobs:
           PYTHON_FILTER: ${{ inputs.python_filter }}
           PLATFORM_FILTER: ${{ inputs.platform }}
           ARCH_FILTER: ${{ inputs.arch_filter }}
+          # The publish run flag + the owner's windows/arm64 serving
+          # gate — compute_matrix's publish gate reads both (build CI
+          # runs the arm64 leg ungated once its link-unit asset exists;
+          # a publish run serves it only with the variable armed).
+          PUBLISH: ${{ inputs.publish }}
+          TEBAKO_SERVE_WINDOWS_ARM64: ${{ vars.TEBAKO_SERVE_WINDOWS_ARM64 }}
+          # compute_matrix reads the tamatebako/python + tamatebako/tebako
+          # release APIs (the windows legs' asset gates): authenticated
+          # calls keep the shared runner NAT's 60/h budget out of the
+          # plan (the build job's same note).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           legs=$(scripts/compute_matrix.rb)
@@ -225,23 +236,35 @@ jobs:
         if: matrix.os == 'windows'
         uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
         with:
-          msystem: ucrt64
+          # x86_64 legs build in the ucrt64 environment (the proven
+          # gcc shape); the arm64 legs run the windows-11-arm hosted
+          # runner's native clangarm64 environment (triple
+          # aarch64-w64-mingw32 — MSYS2's own windows-on-arm recipe,
+          # the environment its aarch64 python package builds in).
+          msystem: ${{ matrix.arch == 'arm64' && 'clangarm64' || 'ucrt64' }}
           path-type: minimal
           update: true
 
-      # The ucrt64 CPython toolchain: the compiler/libc + the mingw-w64
-      # openssl/zlib dev packages (the msys-runtime openssl/zlib would
-      # mismatch the ucrt64 target), libffi (the msys _ctypes extension's
-      # only dep — bound statically via Mlibs' MODULE__CTYPES_LDFLAGS
-      # rewrite), plus make and the msys ruby the build tooling runs on.
+      # The environment's mingw toolchain + the mingw-w64 openssl/zlib
+      # dev packages (the msys-runtime openssl/zlib would mismatch the
+      # mingw target), libffi (the msys _ctypes extension's only dep —
+      # bound statically via Mlibs' MODULE__CTYPES_LDFLAGS rewrite),
+      # plus make and the msys ruby the build tooling runs on. The
+      # package namespace follows the environment: ucrt-x86_64 on the
+      # x64 legs, clang-aarch64 on the arm64 legs (whose llvm toolchain
+      # ships nm/objdump under both the plain and llvm- spellings).
       - name: Install pacman packages
         if: matrix.os == 'windows'
         shell: msys2 {0}
         run: |
+          case "${{ matrix.arch }}" in
+            arm64) ns=clang-aarch64 ;;
+            *)     ns=ucrt-x86_64 ;;
+          esac
           pacman -S --needed --noconfirm git make ruby \
-            mingw-w64-ucrt-x86_64-toolchain \
-            mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-zlib \
-            mingw-w64-ucrt-x86_64-libffi
+            mingw-w64-$ns-toolchain \
+            mingw-w64-$ns-openssl mingw-w64-$ns-zlib \
+            mingw-w64-$ns-libffi
 
       # --- build -------------------------------------------------------
       # The jit legs provision their build-time-only toolchain first
@@ -274,7 +297,11 @@ jobs:
         run: |
           git config --global core.longpaths true
           rc=0
-          tools/build_runtime --python "${{ matrix.python }}" || rc=$?
+          # --arch: the leg's declared arch. The msys tooling ruby on a
+          # windows-11-arm runner is the emulated x64 build — its
+          # host_cpu self-report (x86_64) would mis-key the msys2
+          # environment, the link-unit pid, and the package name.
+          tools/build_runtime --python "${{ matrix.python }}" --arch "${{ matrix.arch }}" || rc=$?
           # 107 = the msys socket-selectability gate (PythonBuild): the
           # pinned source_release predates the mingw _PyIsSelectable_fd
           # carve-out, so no windows runtime can honestly build from it.
@@ -392,9 +419,11 @@ jobs:
       # The leg's workspace, kept for a day as build diagnostics: one
       # artifact per (platform, arch, python) leg. The publish stage
       # below reads runtime-packages/ in place — since the de-rendezvous
-      # (spec 13 §2a) nothing downloads this artifact anymore.
+      # (spec 13 §2a) nothing downloads this artifact anymore. Uploads
+      # even when the build or boot smoke failed (always()) — a red leg's
+      # packages are exactly the ones worth diagnosing.
       - name: Upload the runtime packages
-        if: matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true'
+        if: ${{ always() && (matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.python }}
