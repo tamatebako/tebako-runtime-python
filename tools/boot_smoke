@@ -294,13 +294,27 @@ end
 # tebako-runtime-<tebako version>-<line>-<triplet>[.exe]. Returns nil for
 # an --exe path outside the grammar — the flavor assertion is meaningless
 # without a declared line (the dev-debug path; the caller degrades).
-def expected_line(executable, platform)
+#
+# The triplet tail is matched against the HOST_IDS vocabulary, never the
+# probing interpreter's host_id: windows-11-arm's msys ruby is an x64
+# ucrt64 build running under Prism emulation, so RbConfig reports x86_64
+# while the leg's artifacts name windows-ucrt-arm64 — the exe's own name
+# is the authority (a probed suffix made the arm64 leg's line nil, which
+# skipped the libpython alias and let the OS loader hijack MSYS2's
+# same-ABI libpython3.14.dll off PATH). Longest-first so a nested id
+# (windows-ucrt-arm64 vs windows-ucrt64) can never mis-bind.
+def expected_line(executable)
   name = File.basename(executable, ".exe")
   prefix = "tebako-runtime-#{File.read(File.join(REPO_ROOT, "VERSION")).strip}-"
-  suffix = "-#{platform.host_id}"
-  return nil unless name.start_with?(prefix) && name.end_with?(suffix)
+  return nil unless name.start_with?(prefix)
 
-  TebakoPythonBuilder::PythonVersion.new(name[prefix.length...-suffix.length])
+  rest = name[prefix.length..]
+  triplet = TebakoPythonBuilder::Platform::HOST_IDS.values
+            .sort_by { |id| -id.length }
+            .find { |id| rest.end_with?("-#{id}") }
+  return nil unless triplet
+
+  TebakoPythonBuilder::PythonVersion.new(rest[0...-(triplet.length + 1)])
 rescue TebakoPythonBuilder::Error
   nil
 end
@@ -313,12 +327,23 @@ end
 # scenario boots it, mirroring the store entry the product's install
 # assembles (exe + image + DLL under the manifest's dll.install_as name).
 # A missing package DLL degrades to the OS loader's own error — loud
-# enough at this layer.
+# enough at this layer. A present package DLL with a nil line (the
+# dev-debug path) used to skip the alias SILENTLY — which is exactly how
+# the arm64 leg's boot resolved MSYS2's same-ABI libpython off PATH (the
+# emulated x64 probe made expected_line miss the arm64-named exe). That
+# skip is loud now.
 def materialize_python_dll(executable, platform, line)
-  return unless platform.msys? && line
+  return unless platform.msys?
 
   source = "#{executable.sub(/\.exe\z/, "")}.dll"
   return unless File.file?(source)
+
+  if line.nil?
+    puts "note: #{File.basename(source)} sits next to #{File.basename(executable)}, but the exe " \
+         "name is outside the runtime-name grammar — no PE-named libpython alias materialized; " \
+         "the OS loader will resolve libpython from PATH"
+    return
+  end
 
   dest = File.join(File.dirname(executable), line.msys_dll_name)
   FileUtils.cp(source, dest) unless File.file?(dest)
@@ -559,7 +584,7 @@ end
 executable = resolve_executable(options[:runtime_root], options[:exe])
 puts "-- Boot smoke: #{executable} (#{platform.host_id})"
 selected = selected_scenarios(platform, options[:scenario])
-line = expected_line(executable, platform)
+line = expected_line(executable)
 materialize_python_dll(executable, platform, line)
 if selected.include?("jit") && line.nil?
   # The jit assertion needs the declared line; an --exe path outside the
