@@ -89,7 +89,7 @@ container_version: "v1"
 # product release — the arm64 leg's input (arscope carries the gnullvm
 # import sets: undefined section symbols + short-form members).
 # Contract unchanged (2).
-link_unit_release: "v2.8.14"
+link_unit_release: "v2.8.15"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
