@@ -261,10 +261,17 @@ jobs:
             arm64) ns=clang-aarch64 ;;
             *)     ns=ucrt-x86_64 ;;
           esac
-          pacman -S --needed --noconfirm git make ruby \
-            mingw-w64-$ns-toolchain \
-            mingw-w64-$ns-openssl mingw-w64-$ns-zlib \
-            mingw-w64-$ns-libffi
+          # pacman fetches die on mirror stalls (the "Operation too slow"
+          # killer) — bounded retry, the ruby factory's contract; a killed
+          # attempt can leave the db lock behind.
+          for attempt in 1 2 3 4; do
+            rm -f /var/lib/pacman/db.lck
+            pacman -S --needed --noconfirm git make ruby \
+              mingw-w64-$ns-toolchain \
+              mingw-w64-$ns-openssl mingw-w64-$ns-zlib \
+              mingw-w64-$ns-libffi && break
+            [ "$attempt" -lt 4 ] && sleep $((2 ** attempt)) || exit 1
+          done
 
       # --- build -------------------------------------------------------
       # The jit legs provision their build-time-only toolchain first
