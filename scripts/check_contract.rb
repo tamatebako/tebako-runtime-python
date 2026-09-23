@@ -32,8 +32,8 @@
 # never publishes is a config bug, not a leg), and locks the TWO
 # representations of the contract version:
 #   - contract.yml at the repo root — the release pipeline's source of
-#     truth (scripts/upload_release.rb folds it into every manifest.json
-#     entry's contract card)
+#     truth (the tebako-release gem's uploader folds it into every
+#     manifest.json entry's contract card)
 #   - TEBAKO_CONTRACT_VERSION in the CONSUMED driver's source —
 #     crates/tebako-driver/src/lib.rs at contract.yml's link_unit_release
 #     pin (this factory links the product's published link unit; there is

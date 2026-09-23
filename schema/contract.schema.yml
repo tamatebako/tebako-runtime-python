@@ -28,6 +28,10 @@ properties:
     type: string
     pattern: '^$|^v\d+\.\d+\.\d+$'
     description: the tamatebako/python release whose tfs-python-*-src.tar.gz assets the legs consume (empty = no source release yet; build legs fail closed)
+  release_tooling:
+    type: string
+    pattern: '^v\d+\.\d+\.\d+$'
+    description: the tamatebako/tebako-release-tooling tag the Gemfile pins (the release machinery's single owner; consumed by the publish/sign legs and the coordinator's audit)
   python:
     type: object
     required: [catalog, full, tidy]

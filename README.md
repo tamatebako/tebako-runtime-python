@@ -11,8 +11,9 @@ the registry. The full chain — fetch/verify → configure/make → driver
 link → env-image pack → packaging → provenance gate → boot smoke — is
 implemented in `build/lib/tebako_python_builder/` and wired into CI
 (`build-*.yml` × 4 over `_build-platform.yml`, the ruby factory's
-coordinator shape; `publish.yml` carries the release machinery via
-`scripts/upload_release.rb`). The matrix is green end to end —
+coordinator shape; `publish.yml` carries the release orchestration —
+the machinery itself is the tebako-release gem, pinned at contract.yml's
+`release_tooling`). The matrix is green end to end —
 linux-gnu / linux-musl / macos (x86_64 + arm64) and windows-ucrt64.
 A windows/arm64 leg (windows-11-arm + msys2 clangarm64) is wired but
 disabled until the product publishes its link unit and the owner arms
@@ -255,7 +256,7 @@ tfs-python-<v>-src.tar.gz          link-unit-<ver>-<pid>.tar.gz
         provenance gate (ci/check_symbol_provenance.sh)
         boot smoke (tools/boot_smoke: imports off the mounted image,
         dlopen ext path, TEBAKO_MOUNT_ROOT 65/78 parity, bare-exe
-        contract)  →  publish (scripts/upload_release.rb)
+        contract)  →  publish (the tebako-release gem's uploader)
 ```
 
 Both inputs are **published release artifacts**, consumed by pin from
@@ -368,9 +369,15 @@ platform ships).
   dispatch filters → the leg matrix (with `host_id`, and `jit_llvm` for
   the flavor lines), the env/python expectation rows `publish.yml` later
   asserts.
-- `scripts/upload_release.rb` — the release upload/finalize port:
-  sidecars, shards, the idempotent re-upload skip, the FINALIZE_ONLY
-  pass. `publish.yml`'s release job drives it per platform with the
+- `scripts/release_adapter.rb` — this factory's tebako-release
+  declaration: repo identity, the python_version manifest key, and the
+  policy seam (jit capabilities, the windows libpython DLL facet, the
+  line grammar) delegated to `PythonVersion`. The machinery itself — the
+  byte-immutable uploader, the no-fold signer, the audit — lives in the
+  tebako-release gem (tamatebako/tebako-release-tooling, pinned at
+  contract.yml's `release_tooling`); each leg's publish job runs its
+  `tebako-release upload` / `tebako-release sign`, and `publish.yml`'s
+  release job drives the audit per platform with the
   `EXPECTED_ENV_MATRIX`/`EXPECTED_PYTHON_MATRIX` rows.
 - `tools/build_runtime` — the build entry point (fetch → verify → build
   → link → pack → package → sidecars).

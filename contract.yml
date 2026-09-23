@@ -141,6 +141,14 @@ link_unit_release: "v2.8.16"
 # sha256-verified. A build leg fails closed while this is empty.
 source_release: "v0.3.7"
 
+# The release machinery pin: the tamatebako/tebako-release-tooling tag
+# the Gemfile resolves (the legs' publish/sign jobs + the coordinator's
+# audit consume the gem's tebako-release exe). The gem is the machinery's
+# single owner (ecosystem invariant 10) — this factory declares its
+# identity + policy in scripts/release_adapter.rb and carries no copy of
+# the uploader/signer. A machinery bump is THIS one edit.
+release_tooling: "v0.1.0"
+
 # The python version catalog this factory builds and publishes. Mirrors
 # tamatebako/python's versions.yml at source release v0.3.6 (3.11.16,
 # 3.12.14, 3.13.15, 3.14.7). The source factory owns the

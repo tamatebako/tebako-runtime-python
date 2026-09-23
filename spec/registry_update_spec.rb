@@ -37,7 +37,7 @@ require "yaml"
 $LOAD_PATH.unshift(File.expand_path("../tools", __dir__))
 require "registry_update"
 
-# Recording stand-ins in the sign_release_spec idiom: the renderer accepts
+# Recording stand-ins in the release-spec idiom: the renderer accepts
 # any client object, and every interaction is observable through the fake.
 RegistrySpecRelease = Struct.new(:url, :tag_name)
 RegistrySpecAsset = Struct.new(:name, :browser_download_url)
@@ -77,7 +77,7 @@ end
 RSpec.describe RegistryUpdate do
   let(:version) { "9.9.9" }
 
-  # A release shard as scripts/upload_release.rb writes it (the release's
+  # A release shard as the tebako-release uploader writes it (the release's
   # machine-readable unit, spec 13 §2a): the exe pair's own fields plus
   # the `image` block the registry mirrors. `name_suffix` mints a second
   # asset claiming the same platform (the duplicate-triplet case).

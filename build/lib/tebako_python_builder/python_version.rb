@@ -45,8 +45,9 @@ module TebakoPythonBuilder
   class PythonVersion
     # The one owner of the line grammar (spec 00 §10): the schema's
     # catalog pattern mirrors it (asserted by the lint gate passing on
-    # the same strings), scripts/upload_release.rb's package-filename
-    # parse interpolates LINE_GRAMMAR_SOURCE — nothing re-derives it.
+    # the same strings), and the tebako-release gem's package-filename
+    # parse interpolates LINE_GRAMMAR_SOURCE through this factory's
+    # adapter (scripts/release_adapter.rb) — nothing re-derives it.
     LINE_GRAMMAR_SOURCE = '\d+\.\d+\.\d+(?:-jit)?'
     LINE_PATTERN = /\A(?<base>\d+\.\d+\.\d+)(?:-(?<flavor>jit))?\z/.freeze
 
