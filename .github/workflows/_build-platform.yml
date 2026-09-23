@@ -446,6 +446,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-packages-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.python }}
+          # include-hidden-files: the .leg-complete marker is dot-hidden
+          # (upload-artifact excludes dotfiles by default since v4.4) and
+          # IS the publish job's completeness gate.
+          include-hidden-files: true
           path: runtime-packages
           retention-days: 1
 
