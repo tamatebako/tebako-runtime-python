@@ -41,7 +41,8 @@ module TebakoPythonBuilder
   class Builder
     # The era-2 contract card constants (spec 18 C2): what this factory
     # builds. Written into every package's .contract.yaml sidecar and
-    # folded into the release manifest entry by scripts/upload_release.rb.
+    # folded into the release manifest entry by the tebako-release gem's
+    # uploader.
     CONTRACT_CARD = { "contract_era" => 2, "image_layout" => 1 }.freeze
 
     def initialize(repo_root:, python_version:, tebako_version:, prefix:, output:, # rubocop:disable Metrics/ParameterLists,Metrics/MethodLength
@@ -178,8 +179,8 @@ module TebakoPythonBuilder
     # is the content key the driver's exec-cache segregation (spec 22 §6)
     # reads. Written at build so a factory tree boots store-faithfully
     # (the boot smoke's TEBAKO_RUNTIME_IMAGE then resolves the same image
-    # key the store would give it); never uploaded — upload_release
-    # rejects the suffix alongside .abi/.contract.yaml.
+    # key the store would give it); never uploaded — the tebako-release
+    # uploader rejects the suffix alongside .abi/.contract.yaml.
     def write_image_sidecar
       hex = TebakoPythonBuilder::BuildHelpers.sha256_file(image_output)
       File.write("#{image_output}.sha256", "#{hex}  #{File.basename(image_output)}\n")
@@ -195,8 +196,9 @@ module TebakoPythonBuilder
 
     # The era-2 contract provenance (spec 18 C2) as
     # `<output>.contract.yaml`, folded into the release manifest entry by
-    # scripts/upload_release.rb (fail-closed there: a package without it
-    # is pre-era and refused). built_from names the source release and the
+    # the tebako-release gem's uploader (fail-closed there: a package
+    # without it is pre-era and refused). built_from names the source
+    # release and the
     # consumed tarball with its verified sha256; the additive link_unit
     # block names the consumed product release's unit and its API-declared
     # digest (open parse — consumers that predate the key ignore it).

@@ -33,7 +33,7 @@ require "json"
 require "yaml"
 
 # CI log truth: flush every line so the runner's timestamps are the
-# writes' real times (the 2026-08-20 wedge lesson, upload_release.rb).
+# writes' real times (the 2026-08-20 wedge lesson, the release uploader's).
 $stdout.sync = true
 
 $LOAD_PATH.unshift(File.expand_path("../build/lib", __dir__))
