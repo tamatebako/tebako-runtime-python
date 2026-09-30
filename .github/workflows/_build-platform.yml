@@ -471,6 +471,13 @@ jobs:
     # failed ships no complete artifact; its publish leg fails named at
     # the guards below.
     if: ${{ always() && !cancelled() && needs.compute.outputs.run == 'true' && inputs.publish && !inputs.audit }}
+    # attestations/id-token: the SLSA L3 provenance arm at the leg tail
+    # (gated with the publish — the job's own if — so build/audit runs
+    # never attest).
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     # Runner-native on ubuntu-latest for every leg: the uploader is pure
     # API work, and the signer auto-detects THIS host's tebako-pkg
     # (linux-gnu-x86_64) — an OpenPGP detached signature over served bytes
@@ -541,6 +548,17 @@ jobs:
           TEBAKO_RELEASE_SIGNING_KEY: ${{ secrets.TEBAKO_RELEASE_SIGNING_KEY }}
           SIGN_ONLY_STEMS: tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}
         run: bundle exec tebako-release sign
+
+      # SLSA L3 provenance over the exact bytes this leg ships — the staged
+      # runtime package + its .sha256 sidecars + the .manifest.json shard
+      # (plus the detached .asc when the signing arm ran: the signer
+      # converges them into this same dir). The .leg-complete marker is
+      # dot-hidden, so the glob never names it. Gated with the publish
+      # above (the job's own if) — build/audit runs never attest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: runtime-packages/*
 
   # The terminal aggregate — and the branch-protection gate. The build
   # legs are a dynamic matrix whose check names shift with the catalog

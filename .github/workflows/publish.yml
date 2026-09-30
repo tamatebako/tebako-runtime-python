@@ -141,6 +141,12 @@ jobs:
     # always() + !cancelled(): a SKIPPED prepare-release (the ordinary
     # non-forced publish) must not skip the platform fan-out.
     if: ${{ always() && !cancelled() && !inputs.registry_only && (inputs.platform == 'all' || inputs.platform == 'windows') }}
+    # attestations/id-token ride down to the called workflow's publish
+    # job (its SLSA L3 arm): a caller's grants cap the callee's.
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     uses: ./.github/workflows/_build-platform.yml
     with:
       platform: windows
@@ -153,6 +159,12 @@ jobs:
   linux-gnu:
     needs: prepare-release
     if: ${{ always() && !cancelled() && !inputs.registry_only && (inputs.platform == 'all' || inputs.platform == 'linux-gnu') }}
+    # attestations/id-token ride down to the called workflow's publish
+    # job (its SLSA L3 arm): a caller's grants cap the callee's.
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     uses: ./.github/workflows/_build-platform.yml
     with:
       platform: linux-gnu
@@ -165,6 +177,12 @@ jobs:
   linux-musl:
     needs: prepare-release
     if: ${{ always() && !cancelled() && !inputs.registry_only && (inputs.platform == 'all' || inputs.platform == 'linux-musl') }}
+    # attestations/id-token ride down to the called workflow's publish
+    # job (its SLSA L3 arm): a caller's grants cap the callee's.
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     uses: ./.github/workflows/_build-platform.yml
     with:
       platform: linux-musl
@@ -177,6 +195,12 @@ jobs:
   macos:
     needs: prepare-release
     if: ${{ always() && !cancelled() && !inputs.registry_only && (inputs.platform == 'all' || inputs.platform == 'macos') }}
+    # attestations/id-token ride down to the called workflow's publish
+    # job (its SLSA L3 arm): a caller's grants cap the callee's.
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     uses: ./.github/workflows/_build-platform.yml
     with:
       platform: macos
