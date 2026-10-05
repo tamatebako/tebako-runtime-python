@@ -51,9 +51,10 @@
 #                        site-packages, layout card, preload shim, L1
 #                        manifest) packed by `tfs mkimage` (the default
 #                        limnifs writer)
-#   6. package           runtime-packages/tebako-runtime-<tebako>-<python>-
-#                        <triplet>[.exe] + .tfs + sidecars (.sha256 for
-#                        the image, .abi, .contract.yaml)
+#   6. package           runtime-packages/tebako-runtime-<tebako>-[<lang>-]-
+#                        <python>-<triplet>[.exe] + .tfs + sidecars (.sha256
+#                        for the image, .abi, .contract.yaml) — the language
+#                        segment rides only >= 0.3.0 lines (tebako#716)
 #   7. boot smoke        tools/boot_smoke (a separate entry — CI runs it
 #                        as its own step)
 #
@@ -95,7 +96,7 @@ parser = OptionParser.new do |opts|
   opts.banner = "Usage: tools/build_runtime [options]"
   opts.on("-P", "--python VERSION", "CPython version to build (e.g. 3.13.15), required") { |v| options[:python] = v }
   opts.on("-o", "--output PATH", "Output runtime package path " \
-                                 "(default: runtime-packages/tebako-runtime-<tebako>-<python>-<triplet>)") do |v|
+                                 "(default: runtime-packages/tebako-runtime-<tebako>-[<lang>-]<python>-<triplet>)") do |v|
     options[:output] = v
   end
   opts.on("-p", "--prefix DIR", "Build prefix holding deps and the build trees (default: #{options[:prefix]})") { |v| options[:prefix] = v }

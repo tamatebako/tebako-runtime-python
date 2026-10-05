@@ -80,10 +80,12 @@ RSpec.describe RegistryUpdate do
   # A release shard as the tebako-release uploader writes it (the release's
   # machine-readable unit, spec 13 §2a): the exe pair's own fields plus
   # the `image` block the registry mirrors. `name_suffix` mints a second
-  # asset claiming the same platform (the duplicate-triplet case).
-  def shard(python:, platform:, tebako_version: version, image: :default, name_suffix: "")
+  # asset claiming the same platform (the duplicate-triplet case). `lang`
+  # mints the post-tebako#716 spelling (the language segment in the stem).
+  def shard(python:, platform:, tebako_version: version, image: :default, name_suffix: "", lang: nil)
     exe_suffix = platform.start_with?("windows") ? ".exe" : ""
-    stem = "tebako-runtime-#{tebako_version}-#{python}-#{platform}#{name_suffix}"
+    infix = lang.nil? ? "" : "#{lang}-"
+    stem = "tebako-runtime-#{tebako_version}-#{infix}#{python}-#{platform}#{name_suffix}"
     body = { "tebako_version" => tebako_version, "python_version" => python,
              "platform" => platform,
              "filename" => "#{stem}#{exe_suffix}",
@@ -164,6 +166,20 @@ RSpec.describe RegistryUpdate do
     expect(payload["versions"].map { |v| v["version"] })
       .to eq(["3.13.15-jit-9.9.9", "3.13.15-9.9.9"])
     expect(payload["default"]).to eq("3.13.15-9.9.9")
+  end
+
+  # tebako#716: a post-flip shard's filenames carry the language segment —
+  # the renderer mirrors the shard's own strings verbatim, never recomposes
+  # a name, so the new spelling flows through untouched.
+  it "mirrors a post-tebako#716 (language-segment) artifact name verbatim" do
+    shards = shards_of({ python: "3.14.7", platform: "macos-arm64", lang: "python" })
+    doc = YAML.safe_load(render(shards))
+
+    payload = payload_named(doc, "python")
+    v = payload["versions"].find { |x| x["version"] == "3.14.7-9.9.9" }
+    stem = "tebako-runtime-9.9.9-python-3.14.7-macos-arm64"
+    expect(v["platforms"]["aarch64-macos"])
+      .to eq("artifact" => "#{stem}.tfs", "sha256" => Digest::SHA256.hexdigest("BYTES-#{stem}.tfs"))
   end
 
   it "keeps every tebako line addressable: a reline adds a NEW composite version, never a collision" do

@@ -151,7 +151,14 @@ source_release: "v0.3.7"
 # single owner (ecosystem invariant 10) — this factory declares its
 # identity + policy in scripts/release_adapter.rb and carries no copy of
 # the uploader/signer. A machinery bump is THIS one edit.
-release_tooling: "v0.1.0"
+#
+# v0.5.1: tebako#716's dual-era package-name grammar (on the v0.5.0 seam;
+# v0.5.1 is the publish-leg convergence hardening on top) — the adapter's
+# lang_name hook composes/expects tebako-runtime-<ver>-<lang>-<lv>-<triplet>
+# (this factory's adapter era-gates the hook on the run's tebako version;
+# the gem's parser reads both spellings forever, so the immutable
+# <= 0.2.x lines stay publishable and auditable as-is).
+release_tooling: "v0.5.1"
 
 # The python version catalog this factory builds and publishes. Mirrors
 # tamatebako/python's versions.yml at source release v0.3.6 (3.11.16,
@@ -166,7 +173,8 @@ release_tooling: "v0.1.0"
 # never a selector axis (spec 28 §8's truffleruby native/jvm precedent).
 # A jit line builds the SAME pristine source with
 # --enable-experimental-jit (PEP 744, 3.13+) and publishes as a sibling
-# line: tebako-runtime-<tebako>-3.13.15-jit-<triplet>. The LLVM toolchain
+# line: tebako-runtime-<tebako>-[<lang>-]3.13.15-jit-<triplet> (the
+# language segment rides only >= 0.3.0 lines — tebako#716). The LLVM toolchain
 # is a BUILD-TIME-only dependency (the JIT stencils are compiled into the
 # exe; the shipped runtime gains no runtime system dependency —
 # CPython's Tools/jit/README.md). tidy deliberately carries no jit line:
