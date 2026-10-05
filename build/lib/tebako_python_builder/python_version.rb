@@ -38,7 +38,8 @@ module TebakoPythonBuilder
   # copy-and-patch JIT (--enable-experimental-jit, PEP 744): the same
   # pristine source, a different configure-time ability. The line flows
   # verbatim into the package/image names
-  # (tebako-runtime-<tebako>-3.13.15-jit-<triplet>), the release index's
+  # (tebako-runtime-<tebako>-[<lang>-]3.13.15-jit-<triplet> — the language
+  # segment rides only >= 0.3.0 lines, tebako#716), the release index's
   # python_version identity, and the L1 manifest's provides.version;
   # provides.language_version stays the BASE version (a jit build speaks
   # exactly CPython 3.13.15 — constraints match the language level).

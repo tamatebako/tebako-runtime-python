@@ -121,6 +121,10 @@ jobs:
       leg_count: ${{ steps.emit.outputs.leg_count }}
       legs: ${{ steps.emit.outputs.legs }}
       tebako_version: ${{ steps.emit.outputs.tebako_version }}
+      # tebako#716's language infix of the runtime asset name: "python-"
+      # on tebako lines >= 0.3.0, empty on the immutable <= 0.2.x era —
+      # keyed on THIS run's tebako version (the emit step's own gate).
+      lang_infix: ${{ steps.emit.outputs.lang_infix }}
       env_matrix: ${{ steps.emit.outputs.env_matrix }}
       python_matrix: ${{ steps.emit.outputs.python_matrix }}
     steps:
@@ -161,6 +165,22 @@ jobs:
             echo "leg_count=$count"
             if [ "$count" -gt 0 ]; then echo "run=true"; else echo "run=false"; fi
             echo "tebako_version=$(cat VERSION)"
+            # tebako#716 (spec 05 §2's era law): the runtime asset name
+            # gains a language segment —
+            # tebako-runtime-<ver>-python-<lv>-<triplet> — ONLY on tebako
+            # lines >= 0.3.0. The <= 0.2.x lines are immutable
+            # (sha256-pinned in the live registries), so the gate keys on
+            # THIS run's version — a catalog/mop-up rerun of an old line
+            # composes old-era names even after the flip lands. Every
+            # compose site below threads this output; the release
+            # machinery's own gate (scripts/release_adapter.rb's
+            # lang_name) reads the same run version off TEBAKO_VERSION, so
+            # leg and uploader never disagree.
+            if [ "$(printf '%s\n%s\n' "0.3.0" "$(cat VERSION)" | sort -V | head -1)" = "0.3.0" ]; then
+              echo "lang_infix=python-" >> "$GITHUB_OUTPUT"
+            else
+              echo "lang_infix=" >> "$GITHUB_OUTPUT"
+            fi
             echo "env_matrix=$(scripts/compute_matrix.rb --format env)"
             echo "python_matrix=$(scripts/compute_matrix.rb --format pythons)"
           } >> "$GITHUB_OUTPUT"
@@ -350,7 +370,7 @@ jobs:
           APPLE_ASC_ISSUER_ID: ${{ secrets.APPLE_ASC_ISSUER_ID }}
         run: |
           set -euo pipefail
-          runtime="tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
+          runtime="tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"
           bash ci/macos-sign-notarize-runtime.sh "runtime-packages/$runtime"
 
       # --- the gates (a red gate skips the publish below, and the
@@ -363,13 +383,13 @@ jobs:
             "${{ matrix.container }}" bash -c '
               set -e
               ci/check_symbol_provenance.sh --exe \
-                "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"'
+                "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"'
 
       - name: Check symbol provenance (macos)
         if: matrix.os == 'macos'
         run: |
           ci/check_symbol_provenance.sh --exe \
-            "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}"
+            "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"
 
       # The exe name carries .exe on this leg (Platform#exe_suffix) and it
       # must be spelled out: msys stat() transparency lets foo.exe satisfy
@@ -383,7 +403,7 @@ jobs:
         run: |
           set -euo pipefail
           ci/check_symbol_provenance.sh --exe \
-            "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}.exe"
+            "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}.exe"
 
       # The boot smoke self-selects the scenario set per platform (the
       # POSIX set vs the windows bare + named-error trio) and resolves the
@@ -546,7 +566,7 @@ jobs:
           TEBAKO_VERSION: ${{ needs.compute.outputs.tebako_version }}
           TEBAKO_RELEASE_SIGNING_ENABLED: ${{ vars.TEBAKO_RELEASE_SIGNING_ENABLED }}
           TEBAKO_RELEASE_SIGNING_KEY: ${{ secrets.TEBAKO_RELEASE_SIGNING_KEY }}
-          SIGN_ONLY_STEMS: tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ matrix.python }}-${{ matrix.host_id }}
+          SIGN_ONLY_STEMS: tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}
         run: bundle exec tebako-release sign
 
       # SLSA L3 provenance over the exact bytes this leg ships — the staged

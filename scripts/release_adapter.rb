@@ -63,6 +63,21 @@ class PythonReleaseAdapter < TebakoRelease::Adapter
   def version_grammar_source
     TebakoPythonBuilder::PythonVersion::LINE_GRAMMAR_SOURCE
   end
+
+  # tebako#716's language segment of the package-name grammar
+  # (`tebako-runtime-<ver>-python-<lv>-<triplet>`), era-gated per spec 05
+  # §2's era law: ONLY tebako lines >= 0.3.0 compose the new-era spelling;
+  # the <= 0.2.x lines are immutable (sha256-pinned in the live
+  # registries) and keep the lang-less spelling forever. The gate reads
+  # the version being published in THIS run through the exact channel the
+  # gem's uploader reads it (TEBAKO_VERSION — the uploader's @version,
+  # uploader.rb), never this repo's VERSION file: a catalog/mop-up rerun
+  # of an old line composes old-era names even with this adapter merged.
+  # The grammar fact itself lives in PackageName (spec 00 §10's
+  # single-owner rule — Builder#default_output flows the same gate).
+  def lang_name
+    TebakoPythonBuilder::PackageName.lang_segment(ENV.fetch("TEBAKO_VERSION"))
+  end
 end
 
 TebakoRelease.configure(

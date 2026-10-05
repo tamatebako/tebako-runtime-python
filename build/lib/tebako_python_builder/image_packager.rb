@@ -30,7 +30,9 @@ require "fileutils"
 module TebakoPythonBuilder
   # Packs the assembled layout tree into the standalone image published
   # next to the runtime executable:
-  # tebako-runtime-<tebako>-<python>-<platform>.tfs.
+  # tebako-runtime-<tebako>-[<lang>-]<python>-<platform>.tfs (both name
+  # eras — tebako#716; the image name derives from the executable's own
+  # name, so the era follows the package's).
   #
   # One tool only: the pin-verified tfs CLI (TfsTool), `tfs mkimage`
   # WITHOUT a --format flag — the default format is limnifs (spec 20 §6),

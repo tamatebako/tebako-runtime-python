@@ -290,8 +290,11 @@ def ungranted_fixture(tfs, dir, platform)
 end
 
 # The line the built runtime claims, recovered from the executable's name
-# (the same spelling scripts/upload_release.rb's parser emits):
-# tebako-runtime-<tebako version>-<line>-<triplet>[.exe]. Returns nil for
+# (the same spelling the release gem's parser emits), dual-era
+# (tebako#716): tebako-runtime-<tebako version>-[<lang>-]<line>-<triplet>[.exe]
+# — the language segment rides only >= 0.3.0 lines (PackageName owns the
+# gate); the parse accepts both spellings forever, exactly like the
+# tebako-release gem's dual-era parser. Returns nil for
 # an --exe path outside the grammar — the flavor assertion is meaningless
 # without a declared line (the dev-debug path; the caller degrades).
 #
@@ -309,6 +312,12 @@ def expected_line(executable)
   return nil unless name.start_with?(prefix)
 
   rest = name[prefix.length..]
+  # The new-era language segment (PackageName::LANG_SEGMENT is its single
+  # owner): strip it when present. Lines are numeric (x.y.z[-jit]), so a
+  # leading <lang>- is unambiguous; a FOREIGN segment stays in rest and
+  # fails the line parse below — nil, the documented degrade.
+  lang = TebakoPythonBuilder::PackageName::LANG_SEGMENT
+  rest = rest[(lang.length + 1)..] if rest.start_with?("#{lang}-")
   triplet = TebakoPythonBuilder::Platform::HOST_IDS.values
             .sort_by { |id| -id.length }
             .find { |id| rest.end_with?("-#{id}") }
@@ -592,7 +601,7 @@ if selected.include?("jit") && line.nil?
   # is a usage error; inside "all" the scenario degrades to a loud skip.
   if options[:scenario] == "jit"
     usage_error("scenario 'jit' needs a runtime-named executable " \
-                "(tebako-runtime-<tebako>-<line>-<triplet>); got #{File.basename(executable)}")
+                "(tebako-runtime-<tebako>-[<lang>-]<line>-<triplet>); got #{File.basename(executable)}")
   end
   puts "note: jit scenario skipped — #{File.basename(executable)} is outside the runtime-name grammar"
   selected -= ["jit"]

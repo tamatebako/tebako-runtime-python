@@ -95,9 +95,13 @@ module TebakoPythonBuilder
       output
     end
 
+    # The package name's era gate (tebako#716) lives in PackageName and
+    # keys on THIS build's tebako version: a --tebako-version override
+    # naming a <= 0.2.x line composes the old-era spelling.
     def default_output
       File.join(Dir.pwd, "runtime-packages",
-                "tebako-runtime-#{@tebako_version}-#{@python_version}-#{@platform.host_id}#{@platform.exe_suffix}")
+                "tebako-runtime-#{@tebako_version}-#{PackageName.lang_infix(@tebako_version)}" \
+                "#{@python_version}-#{@platform.host_id}#{@platform.exe_suffix}")
     end
 
     # The standalone runtime filesystem image published next to the

@@ -55,7 +55,8 @@
 #   python / os / arch / host   — the matrix coordinates
 #   host_id                     — this factory's package-name platform id
 #                                 (Platform::HOST_IDS — the exe/image
-#                                 grammar tebako-runtime-<ver>-<python>-<host_id>)
+#                                 grammar tebako-runtime-<ver>-[<lang>-]-
+#                                 <python>-<host_id>, both eras — tebako#716)
 #   jit_llvm                    — the LLVM major a jit line's build
 #                                 provisions ("" for unflavored lines),
 #                                 from PythonVersion::JIT_LLVM_MAJORS;

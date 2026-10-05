@@ -5,6 +5,21 @@ Builds and publishes the prebuilt tebako CPython runtime packages
 the tebako bootstrap/shim resolves at press/run time. Modeled on
 [tebako-runtime-ruby](https://github.com/tamatebako/tebako-runtime-ruby).
 
+The package-name spelling is era-gated
+([tebako#716](https://github.com/tamatebako/tebako/issues/716)): tebako
+lines **>= 0.3.0** compose
+`tebako-runtime-<tebako-version>-python-<python-version>-<triplet>` — a
+`python` language segment joins the name — while the **<= 0.2.x** lines
+are immutable (sha256-pinned in the live registries) and keep the
+lang-less spelling forever. The gate keys on the tebako version of the
+run at hand, never on a repo-wide flag: the build workflow computes a
+`lang_infix` output from that version and every compose site threads it,
+and the release adapter's `lang_name` hook reads the same run version off
+`TEBAKO_VERSION`, so a catalog or mop-up re-run of an old line keeps
+composing old-era names even after the flip lands. Tooling that parses
+artifact names (the boot smoke's line parse, the release gem) accepts
+both spellings.
+
 **Status: live.** Releases (`v*`) publish the per-platform runtime
 packages (latest line: `v0.1.x`); consumers pin them by `contract.yml` +
 the registry. The full chain — fetch/verify → configure/make → driver
@@ -207,9 +222,9 @@ installs nothing.
 The publish layout mirrors tebako-runtime-ruby's current shape (its
 issue-139 layout from day one — **no legacy monolith-only mode**):
 
-- `tebako-runtime-<tebako>-<python>-<triplet>[.exe]` — the interpreter:
+- `tebako-runtime-<tebako>-[<lang>-]<python>-<triplet>[.exe]` — the interpreter:
   `python3` with the spec-17 driver linked in (the fs TU as `main`).
-- `tebako-runtime-<tebako>-<python>-<triplet>.tfs` — the env image:
+- `tebako-runtime-<tebako>-[<lang>-]<python>-<triplet>.tfs` — the env image:
   stdlib + lib-dynload + the whitelisted site-packages + the preload
   shim (POSIX — REQUIRED here: the unpatched interpreter cannot read its
   own mounted image without it, so a missing shim is a hard build error,

@@ -49,6 +49,7 @@ module TebakoPythonBuilder
   autoload :ImagePackager,  File.expand_path("tebako_python_builder/image_packager", __dir__)
   autoload :LinkUnit,       File.expand_path("tebako_python_builder/link_unit", __dir__)
   autoload :Mlibs,          File.expand_path("tebako_python_builder/mlibs", __dir__)
+  autoload :PackageName,    File.expand_path("tebako_python_builder/package_name", __dir__)
   autoload :Platform,       File.expand_path("tebako_python_builder/platform", __dir__)
   autoload :PythonBuild,    File.expand_path("tebako_python_builder/python_build", __dir__)
   autoload :PythonVersion,  File.expand_path("tebako_python_builder/python_version", __dir__)
