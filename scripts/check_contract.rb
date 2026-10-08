@@ -157,7 +157,7 @@ class ContractCheck
   def driver_source
     return [File.read(@driver_src), @driver_src] if @driver_src
 
-    url = "https://raw.githubusercontent.invalid/#{DRIVER_REPO}/#{link_unit_release}/#{DRIVER_LIB_RS}"
+    url = "https://raw.githubusercontent.com/#{DRIVER_REPO}/#{link_unit_release}/#{DRIVER_LIB_RS}"
     [TebakoPythonBuilder::BuildHelpers.read_url(url, code: 1), url]
   end
 
