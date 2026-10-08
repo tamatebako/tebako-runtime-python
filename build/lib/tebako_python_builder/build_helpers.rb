@@ -40,6 +40,21 @@ module TebakoPythonBuilder
   module BuildHelpers
     MAX_REDIRECTS = 5
 
+    # A fetch's transient-failure budget: bounded attempts with backoff
+    # (the delay is BACKOFF_BASE**attempt seconds) for the failures a
+    # retry can honestly fix — 408/429/5xx responses and transport-level
+    # errors. Every other 4xx is permanent and fails closed on the first
+    # attempt. Each failed attempt is named on stderr as it happens, so
+    # the raw log carries the cause even when a later annotation channel
+    # drops it.
+    READ_URL_ATTEMPTS = 3
+    READ_URL_BACKOFF_BASE = 2
+    READ_URL_RETRYABLE_STATUSES = [408, 429].freeze
+    READ_URL_RETRYABLE_ERRORS = [
+      EOFError, Net::HTTPBadResponse, OpenSSL::SSL::SSLError, SocketError,
+      SystemCallError, Timeout::Error
+    ].freeze
+
     class << self
       def run_with_capture(args, env: {}, chdir: nil)
         args = args.compact
@@ -105,15 +120,43 @@ module TebakoPythonBuilder
           raise TebakoPythonBuilder::Error.new("too many redirects fetching #{url}", code)
         end
 
-        response = http_get(uri, headers)
-        case response
-        when Net::HTTPSuccess then response.body
-        when Net::HTTPRedirection
-          read_url(URI.join(url, response["location"]).to_s, code: code,
-                   redirects_left: redirects_left - 1, headers: headers)
-        else
-          raise TebakoPythonBuilder::Error.new("#{response.code} #{response.message} fetching #{url}", code)
+        READ_URL_ATTEMPTS.times do |attempt|
+          begin
+            response = http_get(uri, headers)
+          rescue *READ_URL_RETRYABLE_ERRORS => e
+            next if retry_attempt(url, attempt + 1, "#{e.class}: #{e.message}")
+
+            raise TebakoPythonBuilder::Error.new("#{e.class}: #{e.message} fetching #{url}", code)
+          end
+          case response
+          when Net::HTTPSuccess then return response.body
+          when Net::HTTPRedirection
+            return read_url(URI.join(url, response["location"]).to_s, code: code,
+                            redirects_left: redirects_left - 1, headers: headers)
+          else
+            status = response.code.to_i
+            next if retryable_status?(status) && retry_attempt(url, attempt + 1, "#{response.code} #{response.message}")
+
+            raise TebakoPythonBuilder::Error.new("#{response.code} #{response.message} fetching #{url}", code)
+          end
         end
+      end
+
+      # True when the HTTP status is one a retry can honestly fix.
+      def retryable_status?(status)
+        READ_URL_RETRYABLE_STATUSES.include?(status) || status >= 500
+      end
+
+      # Names a failed attempt on stderr and sleeps out the backoff; true
+      # while another attempt remains, false once the budget is spent (the
+      # caller then raises the named failure).
+      def retry_attempt(url, attempt, reason)
+        return false if attempt >= READ_URL_ATTEMPTS
+
+        delay = READ_URL_BACKOFF_BASE**attempt
+        warn "attempt #{attempt}/#{READ_URL_ATTEMPTS} failed fetching #{url}: #{reason} — retrying in #{delay}s"
+        sleep delay
+        true
       end
 
       def read_file_url(uri, code)
