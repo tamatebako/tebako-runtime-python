@@ -28,8 +28,16 @@
 # thin platform triggers (build-<platform>.yml) and by the publish.yml
 # coordinator — never dispatched directly.
 #
-# Stage 1 (compute): the contract gate (schema + pins + the driver-source
-#   parity arm) runs, then scripts/compute_matrix.rb expands THIS
+# Stage 0 (parity): the contract gate's driver-source parity arm needs the
+#   pinned link-unit release's lib.rs — a raw.githubusercontent.com fetch
+#   that flakes under four near-simultaneous per-platform reads
+#   (tamatebako/tebako-runtime-python#4). ONE dedicated job fetches it
+#   (bounded retry inside BuildHelpers.read_url) and hands it to the
+#   compute job as an artifact, so a flaky fetch fails this one retried
+#   job instead of a platform's whole compute leg.
+# Stage 1 (compute): the contract gate (schema + pins + the parity arm,
+#   reading the stage-0 artifact via TEBAKO_DRIVER_SRC — fail-closed
+#   exactly as before) runs, then scripts/compute_matrix.rb expands THIS
 #   platform's legs under the dispatch filters. Every downstream value
 #   flows from these outputs — workflow YAML never hardcodes a version, a
 #   tag, or a SHA (ecosystem SSOT invariant).
@@ -113,8 +121,40 @@ env:
   CACHE_VER: 1
 
 jobs:
+  # The parity artifact, fetched ONCE per call: the driver-source parity
+  # arm's second representation (the pinned link-unit release's lib.rs)
+  # off raw.githubusercontent.com — a transient-failure surface that used
+  # to ride inside every platform's compute step, where one flake red-ed
+  # the whole platform and the ::error:: never reached the log
+  # (tamatebako/tebako-runtime-python#4). The fetch retries with backoff
+  # (BuildHelpers.read_url) and names every failed attempt on stderr; the
+  # compute job below consumes the artifact, never the network.
+  parity:
+    name: Fetch the driver parity source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Fetch the pinned driver's parity source
+        run: bundle exec scripts/check_contract.rb --fetch-parity .build/parity/lib.rs
+
+      # Artifact names are per workflow RUN: publish.yml calls this
+      # workflow once per platform inside one run, so the platform suffix
+      # keeps the four calls' artifacts distinct.
+      - name: Upload the parity source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: driver-parity-src-${{ inputs.platform }}
+          path: .build/parity/lib.rs
+          retention-days: 1
+
   compute:
     name: Compute the ${{ inputs.platform }} legs
+    needs: parity
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.emit.outputs.run }}
@@ -134,10 +174,22 @@ jobs:
           ruby-version: '3.3'
           bundler-cache: true
 
+      # The parity artifact the stage-0 job fetched — the gate's parity
+      # arm reads THIS file (TEBAKO_DRIVER_SRC), never the network.
+      - name: Download the parity source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: driver-parity-src-${{ inputs.platform }}
+          path: .build/parity
+
       # The contract gate first: contract.yml against its schema, the
       # catalog resolvable, AND the driver-source parity arm (the pinned
-      # link-unit release's TEBAKO_CONTRACT_VERSION vs contract_version).
+      # link-unit release's TEBAKO_CONTRACT_VERSION vs contract_version) —
+      # fail-closed, now against the fetched artifact (a missing/unreadable
+      # file fails the arm exactly like a failed fetch did).
       - name: validate the contract
+        env:
+          TEBAKO_DRIVER_SRC: .build/parity/lib.rs
         run: bundle exec scripts/check_contract.rb
 
       - id: emit
@@ -592,13 +644,14 @@ jobs:
   # nothing and skip this job.
   verify:
     name: all legs green
-    needs: [compute, build, publish]
+    needs: [parity, compute, build, publish]
     if: ${{ always() && !cancelled() && !inputs.audit }}
     runs-on: ubuntu-latest
     steps:
       - name: Gate on the legs
         run: |
           set -euo pipefail
+          echo "parity:  ${{ needs.parity.result }}"
           echo "compute: ${{ needs.compute.result }} (run=${{ needs.compute.outputs.run }}, legs=${{ needs.compute.outputs.leg_count }})"
           echo "build:   ${{ needs.build.result }}"
           echo "publish: ${{ needs.publish.result }} (requested=${{ inputs.publish }})"
