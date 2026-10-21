@@ -100,7 +100,13 @@ container_version: "v1"
 # GCC's 4-byte padding no longer ships a pre-rename aws-lc export
 # directive into the windows leg's link (this repo's #53). Contract
 # unchanged (2).
-link_unit_release: "v2.8.49"
+# v2.8.53: the lazy mount at both TFS layers (tebako#848) — the preload
+# shim's TEBAKO_TFS_MOUNTS builder state-detects a LAZY_SEEDING env image
+# and mounts its caching range source, so a fresh lazy line serves the
+# interpreter's stdlib instead of falling through to the host. The
+# python line is the first factory shipping blksum sidecars, so this pin
+# is what makes the lazy install observable-end-to-end for this engine.
+link_unit_release: "v2.8.53"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
