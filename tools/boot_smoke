@@ -303,10 +303,17 @@ end
 
 # The tfs read-back (the truffleruby factory's gate shape): the CLI takes
 # the host image path natively, while the VFS paths must reach it
-# verbatim — MSYS2_ARG_CONV_EXCL is inert on POSIX and stops the msys
-# runtime from rewriting /bin/pip into a host path.
+# verbatim. The msys runtime rewrites POSIX-looking argv entries when IT
+# spawns a native (mingw) child — `/__tpkg__/manifest.yaml` arrives as
+# D:/…/msys64/__tpkg__/manifest.yaml (the windows leg's first run); the
+# exclusion is read from THIS process's environment, before the child's
+# env exists, so it is set here and restored after (inert on POSIX).
 def tfs_read_back(tfs, *args)
-  Open3.capture2e({ "MSYS2_ARG_CONV_EXCL" => "*" }, tfs, *args)
+  previous = ENV.fetch("MSYS2_ARG_CONV_EXCL", nil)
+  ENV["MSYS2_ARG_CONV_EXCL"] = "*"
+  Open3.capture2e(tfs, *args)
+ensure
+  previous.nil? ? ENV.delete("MSYS2_ARG_CONV_EXCL") : ENV["MSYS2_ARG_CONV_EXCL"] = previous
 end
 
 # The line the built runtime claims, recovered from the executable's name
