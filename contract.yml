@@ -106,7 +106,17 @@ container_version: "v1"
 # interpreter's stdlib instead of falling through to the host. The
 # python line is the first factory shipping blksum sidecars, so this pin
 # is what makes the lazy install observable-end-to-end for this engine.
-link_unit_release: "v2.8.53"
+# v2.8.54: the transport window (tebako#851) — a demand fetch's own
+# resolver reads no longer re-enter the interposed surface behind the VFS
+# read lock (the sampled deadlock: getaddrinfo → networkd_settings →
+# open_impl). The window lives in libtfs-preload, i.e. INSIDE this
+# factory's runtime: the artifact must be REBUILT against the line for
+# the fix to reach users — a user-side CLI upgrade cannot deliver it.
+# v2.8.55: the host gate (tebako#853) — the lazy wire is chosen only
+# where the boot tier can read a seeded entry (the windows materialize
+# tier cannot), and the payload edge seals before reading a runtime's
+# embedded manifest.
+link_unit_release: "v2.8.55"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
