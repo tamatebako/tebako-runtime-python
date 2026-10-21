@@ -51,11 +51,12 @@
 #   entrypoint           the runtime's SPAWN SURFACE (spec 30 §2,
 #                        spec 07 §10 — the wire `tebako run python:pip`
 #                        and a python:pip shim compose): the packed
-#                        image's L1 manifest is read back through the
-#                        tfs CLI (it must DECLARE pip and every declared
-#                        path must ride the image), then the shipped
-#                        pair boots with `--tebako-entry pip --version`
-#                        and `--tebako-entry pip3 --version` — pip's
+#                        image is extracted through the tfs CLI (it must
+#                        DECLARE pip and every declared path must ride
+#                        the image, the bin/ inventory matching the
+#                        declaration), then the shipped pair boots with
+#                        `--tebako-entry pip --version` and
+#                        `--tebako-entry pip3 --version` — pip's
 #                        version, from the image's own site-packages —
 #                        and an undeclared name is the driver's named
 #                        exit 65.                                   [all]
@@ -301,21 +302,6 @@ def ungranted_fixture(tfs, dir, platform)
   image
 end
 
-# The tfs read-back (the truffleruby factory's gate shape): the CLI takes
-# the host image path natively, while the VFS paths must reach it
-# verbatim. The msys runtime rewrites POSIX-looking argv entries when IT
-# spawns a native (mingw) child — `/__tpkg__/manifest.yaml` arrives as
-# D:/…/msys64/__tpkg__/manifest.yaml (the windows leg's first run); the
-# exclusion is read from THIS process's environment, before the child's
-# env exists, so it is set here and restored after (inert on POSIX).
-def tfs_read_back(tfs, *args)
-  previous = ENV.fetch("MSYS2_ARG_CONV_EXCL", nil)
-  ENV["MSYS2_ARG_CONV_EXCL"] = "*"
-  Open3.capture2e(tfs, *args)
-ensure
-  previous.nil? ? ENV.delete("MSYS2_ARG_CONV_EXCL") : ENV["MSYS2_ARG_CONV_EXCL"] = previous
-end
-
 # The line the built runtime claims, recovered from the executable's name
 # (the same spelling the release gem's parser emits), dual-era
 # (tebako#716): tebako-runtime-<tebako version>-[<lang>-]<line>-<triplet>[.exe]
@@ -500,20 +486,26 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         # `tebako run python:pip` and a python:pip shim compose: the
         # driver resolves the bare name against the ENV image's
         # runtimeProvides and runs the declared file with the interpreter.
-        # First the read-back (the packed bytes through the tfs CLI that
-        # wrote them): the image must declare its console scripts and HOLD
-        # every declared path. Then the boots: pip, pip3, and an
-        # undeclared name (the driver's named 65).
+        # First the read-back: the packed image is EXTRACTED through the
+        # tfs CLI that wrote it (host paths only — the msys runtime
+        # rewrites POSIX-looking argv entries before a native child ever
+        # sees them, so VFS-path arguments are not portable here), and the
+        # extracted bytes must DECLARE their console scripts in the L1
+        # manifest and HOLD every declared path, with the bin/ inventory
+        # matching the declaration in both directions. Then the boots:
+        # pip, pip3, and an undeclared name (the driver's named 65).
         unless File.file?(image)
           check("entrypoint", false, "no sibling env image #{image}")
           next
         end
         boot_timeout = platform.msys? ? MATERIALIZE_BOOT_TIMEOUT : BOOT_TIMEOUT
-        manifest_text, manifest_status = tfs_read_back(tfs, "cat", image, "/__tpkg__/manifest.yaml")
-        check("entrypoint: the image holds its L1 manifest", manifest_status.exitstatus&.zero?,
-              "tfs cat failed: #{manifest_text}")
+        readback = File.join(dir, "image-readback")
+        out, st = Open3.capture2e(tfs, "extract", image, "-d", readback)
+        check("entrypoint: the image extracts through the tfs CLI", st.exitstatus&.zero?,
+              "tfs extract failed: #{out}")
         declared = begin
-          YAML.safe_load(manifest_text).dig("provides", "entrypoints") || []
+          manifest = YAML.safe_load(File.read(File.join(readback, "__tpkg__", "manifest.yaml")))
+          manifest.dig("provides", "entrypoints") || []
         rescue StandardError => e
           check("entrypoint: the L1 manifest parses", false, "#{e.class}: #{e.message}")
           next
@@ -522,10 +514,13 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         check("entrypoint: the image declares pip", named.include?("pip"), "declared: #{named.inspect}")
         check("entrypoint: the image declares pip3", named.include?("pip3"), "declared: #{named.inspect}")
         declared.each do |ep|
-          out, st = tfs_read_back(tfs, "stat", image, ep["path"].to_s)
-          check("entrypoint: #{ep['path']} rides the image", st.exitstatus&.zero?,
-                "tfs stat #{ep['path']} failed: #{out}")
+          check("entrypoint: #{ep['path']} rides the image",
+                File.file?(File.join(readback, ep["path"].to_s)),
+                "the extracted image holds no #{ep['path']}")
         end
+        staged = Dir.children(File.join(readback, "bin")).sort
+        check("entrypoint: the bin/ inventory is exactly the declaration",
+              staged == named.sort, "staged: #{staged.inspect}, declared: #{named.sort.inspect}")
         out, err, st = boot(executable, ["--tebako-entry", "pip", "--version"],
                             { "TEBAKO_RUNTIME_IMAGE" => image }, timeout: boot_timeout)
         expect_ok("entrypoint: --tebako-entry pip --version", out, err, st, "pip ")
