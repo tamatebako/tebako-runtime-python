@@ -40,10 +40,14 @@ module TebakoPythonBuilder
   # (the real digest lives one tier out — the store sidecar), tree_hash
   # is the zero placeholder until the CAS lands.
   #
-  # No entrypoints are declared (the ruby factory's shape): consumers
-  # resolve the interpreter by the release manifest's naming convention.
-  # `python3 -m pip` is the pip form; a pip3 console script would carry
-  # a dead build-prefix shebang (README's pip decision).
+  # provides.entrypoints is the runtime's SPAWN SURFACE (spec 30 §2 /
+  # spec 07 §10): one {name, path: /bin/<name>} per console script the
+  # image actually holds (ConsoleScripts stages them; ImageBuilder scans
+  # the staged bin/ and asserts both directions). The driver composes a
+  # bare `--tebako-entry <name>` as `<interpreter…> <resolved in-image
+  # path> <user args…>`, and `tebako run python:<name>` /
+  # `tebako install python:<name>` resolve against exactly this list —
+  # an undeclared name is the driver's named exit 65, never a guess.
   # POSIX ssl rides the host's /etc/ssl; windows resolves the system cert
   # store. MSYS builds declare the windows materialize boot tier
   # (windows_boot: materialize, schema_minor 11): the unpatched
@@ -56,12 +60,13 @@ module TebakoPythonBuilder
     # In-image location the driver reads (tpkg::PAYLOAD_MANIFEST_PATH).
     PATH = File.join("__tpkg__", "manifest.yaml").freeze
 
-    def initialize(platform:, python_version:, tebako_version:, patch_set:, src_sha256:)
+    def initialize(platform:, python_version:, tebako_version:, patch_set:, src_sha256:, entrypoints: [])
       @platform = platform
       @python_version = python_version
       @tebako_version = tebako_version
       @patch_set = patch_set
       @src_sha256 = src_sha256
+      @entrypoints = entrypoints
     end
 
     # Write the manifest into the assembled layout tree (before the image
@@ -125,6 +130,10 @@ module TebakoPythonBuilder
     # eligible through the resolver's compat window (tpkg::runtime_store).
     # windows_boot (schema_minor 11) is emitted for MSYS builds only: the
     # windows boot tier, whose single locked value is `materialize`.
+    # entrypoints (spec 30 §2) is emitted per staged console script; an
+    # image that holds none declares none (the key is omitted, never an
+    # empty list — the tpkg model treats absent and empty alike, but an
+    # absent key keeps the pre-spawn reading of the block).
     def provides # rubocop:disable Metrics/MethodLength -- one declarative block per spec 03 §2.2; splitting it scatters the grammar
       python = TebakoPythonBuilder::PythonVersion.new(@python_version)
       declaration = {
@@ -140,6 +149,11 @@ module TebakoPythonBuilder
         "capabilities" => { "exec" => true, "read" => true, "runtime" => true }
       }
       declaration["windows_boot"] = "materialize" if @platform.msys?
+      unless @entrypoints.empty?
+        declaration["entrypoints"] = @entrypoints.sort.map do |name|
+          { "name" => name, "path" => "/bin/#{name}" }
+        end
+      end
       declaration
     end
   end

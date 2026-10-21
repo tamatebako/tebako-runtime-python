@@ -48,6 +48,18 @@
 #                        IN-IMAGE path — the driver joins it with the
 #                        declared mount): a stdlib-importing script runs
 #                        from the mounted payload                  [POSIX]
+#   entrypoint           the runtime's SPAWN SURFACE (spec 30 §2,
+#                        spec 07 §10 — the wire `tebako run python:pip`
+#                        and a python:pip shim compose): the packed
+#                        image is extracted through the tfs CLI (it must
+#                        DECLARE pip and every declared path must ride
+#                        the image, the bin/ inventory matching the
+#                        declaration), then the shipped pair boots with
+#                        `--tebako-entry pip --version` and
+#                        `--tebako-entry pip3 --version` — pip's
+#                        version, from the image's own site-packages —
+#                        and an undeclared name is the driver's named
+#                        exit 65.                                   [all]
 #   bad-mount            --tebako-image <missing>:-:/nope -> exit 69
 #                        (the unavailable image, named on stderr)
 #   materialize-boot     the windows materialize tier (spec 17 §7): the
@@ -104,7 +116,7 @@
 #
 # Usage:
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
-#                    [--scenario all|bare|boot|payload|bad-mount|
+#                    [--scenario all|bare|boot|payload|entrypoint|bad-mount|
 #                                materialize-boot|socket-timeout|e-flag|
 #                                mount-root-override|
 #                                mount-root-malformed|override-ungranted|jit]
@@ -115,6 +127,7 @@ require "fileutils"
 require "open3"
 require "optparse"
 require "tmpdir"
+require "yaml"
 
 REPO_ROOT = File.expand_path("..", __dir__).freeze
 $LOAD_PATH.unshift(File.join(REPO_ROOT, "build", "lib"))
@@ -372,10 +385,11 @@ def jit_probe(line)
   end
 end
 
-KNOWN_SCENARIOS = %w[bare boot payload bad-mount materialize-boot socket-timeout e-flag
+KNOWN_SCENARIOS = %w[bare boot payload entrypoint bad-mount materialize-boot socket-timeout e-flag
                      mount-root-override mount-root-malformed override-ungranted jit].freeze
-# Scenarios that build fixture images with the tfs CLI.
-TFS_SCENARIOS = %w[payload override-ungranted].freeze
+# Scenarios that build fixture images with the tfs CLI (entrypoint reads
+# the packed image back through it).
+TFS_SCENARIOS = %w[payload override-ungranted entrypoint].freeze
 
 def selected_scenarios(platform, only)
   selected = []
@@ -387,8 +401,8 @@ def selected_scenarios(platform, only)
     selected += %w[materialize-boot socket-timeout e-flag] if
       %w[all materialize-boot socket-timeout e-flag].include?(only)
   end
-  selected += %w[bad-mount mount-root-malformed override-ungranted] if
-    %w[all bad-mount mount-root-malformed override-ungranted].include?(only)
+  selected += %w[bad-mount mount-root-malformed override-ungranted entrypoint] if
+    %w[all bad-mount mount-root-malformed override-ungranted entrypoint].include?(only)
 
   if selected.empty? && only != "all"
     # A single named scenario was requested; an explicit ask wins over the
@@ -467,6 +481,61 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         expect_ok("payload", out, err, st, "PAYLOAD-OK")
         check("payload: entry file rides the mount", out.include?("file: /app/bin/hello.py"),
               "stdout: #{out}\nstderr: #{err}")
+      when "entrypoint"
+        # The spawn surface (spec 30 §2 / spec 07 §10) — the exact wire
+        # `tebako run python:pip` and a python:pip shim compose: the
+        # driver resolves the bare name against the ENV image's
+        # runtimeProvides and runs the declared file with the interpreter.
+        # First the read-back: the packed image is EXTRACTED through the
+        # tfs CLI that wrote it (host paths only — the msys runtime
+        # rewrites POSIX-looking argv entries before a native child ever
+        # sees them, so VFS-path arguments are not portable here), and the
+        # extracted bytes must DECLARE their console scripts in the L1
+        # manifest and HOLD every declared path, with the bin/ inventory
+        # matching the declaration in both directions. Then the boots:
+        # pip, pip3, and an undeclared name (the driver's named 65).
+        unless File.file?(image)
+          check("entrypoint", false, "no sibling env image #{image}")
+          next
+        end
+        boot_timeout = platform.msys? ? MATERIALIZE_BOOT_TIMEOUT : BOOT_TIMEOUT
+        readback = File.join(dir, "image-readback")
+        out, st = Open3.capture2e(tfs, "extract", image, "-d", readback)
+        check("entrypoint: the image extracts through the tfs CLI", st.exitstatus&.zero?,
+              "tfs extract failed: #{out}")
+        declared = begin
+          manifest = YAML.safe_load(File.read(File.join(readback, "__tpkg__", "manifest.yaml")))
+          manifest.dig("provides", "entrypoints") || []
+        rescue StandardError => e
+          check("entrypoint: the L1 manifest parses", false, "#{e.class}: #{e.message}")
+          next
+        end
+        named = declared.map { |ep| ep["name"].to_s }
+        check("entrypoint: the image declares pip", named.include?("pip"), "declared: #{named.inspect}")
+        check("entrypoint: the image declares pip3", named.include?("pip3"), "declared: #{named.inspect}")
+        declared.each do |ep|
+          check("entrypoint: #{ep['path']} rides the image",
+                File.file?(File.join(readback, ep["path"].to_s)),
+                "the extracted image holds no #{ep['path']}")
+        end
+        staged = Dir.children(File.join(readback, "bin")).sort
+        check("entrypoint: the bin/ inventory is exactly the declaration",
+              staged == named.sort, "staged: #{staged.inspect}, declared: #{named.sort.inspect}")
+        out, err, st = boot(executable, ["--tebako-entry", "pip", "--version"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image }, timeout: boot_timeout)
+        expect_ok("entrypoint: --tebako-entry pip --version", out, err, st, "pip ")
+        check("entrypoint: pip answers with its version, from the image",
+              out.match?(/^pip \d+\.\d+/) && out.match?(%r{site-packages[/\\]pip}),
+              "stdout: #{out}\nstderr: #{err}")
+        puts "     entrypoint: #{out.lines.first.to_s.strip}"
+        out, err, st = boot(executable, ["--tebako-entry", "pip3", "--version"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image }, timeout: boot_timeout)
+        expect_ok("entrypoint: --tebako-entry pip3 --version", out, err, st, "pip ")
+        out, err, st = boot(executable, ["--tebako-entry", "no-such-command", "--version"],
+                            { "TEBAKO_RUNTIME_IMAGE" => image }, timeout: boot_timeout)
+        expect_exit("entrypoint: an undeclared name is refused", out, err, st, 65)
+        check("entrypoint: the refusal names the runtime spawn surface",
+              err.include?("declares no runtime entrypoint"), "stderr: #{err}")
       when "bad-mount"
         missing = File.join(dir, "no-such-image.tfs")
         out, err, st = boot(executable,

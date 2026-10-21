@@ -39,9 +39,13 @@ module TebakoPythonBuilder
   # degrade), and the L1 payload manifest (__tpkg__/manifest.yaml).
   #
   # The interpreter binary itself is NOT in the image — the exe ships
-  # beside it (the image-era runtime's two-artifact shape; the bin/ dir
-  # also carries the ensurepip console scripts whose build-prefix
-  # shebangs would be dead links — README's pip3 decision).
+  # beside it (the image-era runtime's two-artifact shape). bin/ is
+  # pruned with the staged install's dead-shebang ensurepip scripts and
+  # then populated with the image's own console scripts (ConsoleScripts,
+  # generated from the installed pip's metadata); they are Python source
+  # files the runtime interpreter executes through the spec-17 entry
+  # composition, and their paths form the runtime's declared spawn
+  # surface (provides.entrypoints — spec 30 §2, spec 07 §10).
   #
   # The pruned stdlib members (test/, idlelib, tkinter/turtle — the
   # *disabled* extensions' python sides, and the test suite) are the v1
@@ -76,10 +80,11 @@ module TebakoPythonBuilder
 
     # Pruned under the staged prefix tree (relative spellings;
     # <libdir> is pythonX.Y). The interpreter exe ships beside the image,
-    # so bin/ never rides; include/ + the static libpython + pkgconfig are
-    # the build-time surface a read-only runtime image never needs (the
-    # xml2rfc-class payload installs pure-python wheels); share/ is man
-    # pages.
+    # so the STAGED bin/ never rides; the image's own console scripts are
+    # deployed after the prune (deploy_console_scripts). include/ + the
+    # static libpython + pkgconfig are the build-time surface a read-only
+    # runtime image never needs (the xml2rfc-class payload installs
+    # pure-python wheels); share/ is man pages.
     PRUNE_TOP = %w[bin include share].freeze
     PRUNE_FILES = ["lib/pkgconfig"].freeze
     # Pruned under lib/pythonX.Y/: the test suite and the disabled
@@ -109,10 +114,12 @@ module TebakoPythonBuilder
       FileUtils.mkdir_p(dest)
       FileUtils.cp_r("#{staged_tree}/.", dest)
       prune(dest)
+      deploy_console_scripts(dest)
       flatten_nt_layout(dest) if @platform.msys?
       deploy_preload(dest)
       deploy_layout(dest)
       deploy_manifest(dest)
+      verify_spawn_surface(dest)
       dest
     end
 
@@ -228,13 +235,64 @@ module TebakoPythonBuilder
       puts "   ... env image layout declaration: #{path}"
     end
 
+    # The image's spawn-surface executables (ConsoleScripts): staged after
+    # the prune (the install's own bin/ carried dead-shebang ensurepip
+    # scripts, and the msys leg stages none at all). The staged names are
+    # the declaration's source — deploy_manifest renders exactly these.
+    def deploy_console_scripts(tree)
+      @entrypoints = TebakoPythonBuilder::ConsoleScripts.new(
+        tree: tree,
+        python_version: @python.python_version,
+        mount_root: @platform.mount_root
+      ).deploy
+      puts "   ... env image console scripts: #{@entrypoints.map { |name| "/bin/#{name}" }.join(", ")}"
+    end
+
     def deploy_manifest(tree)
       path = TebakoPythonBuilder::ImageManifest.new(platform: @platform,
                                                     python_version: @python.python_version,
                                                     tebako_version: @tebako_version,
                                                     patch_set: @patch_set,
-                                                    src_sha256: @src_sha256).deploy(tree)
+                                                    src_sha256: @src_sha256,
+                                                    entrypoints: @entrypoints).deploy(tree)
       puts "   ... env image payload manifest: #{path}"
+    end
+
+    # The spawn-surface read-back gate (the truffleruby factory's pattern,
+    # both directions): the manifest WRITTEN to the image is re-read from
+    # disk, every declared name must be a file the image holds at exactly
+    # the declared path, and every staged bin/ member must be declared.
+    # A one-sided drift — a script staged without a declaration, or a
+    # declaration whose file never landed — fails the build here (131),
+    # never at a consumer's boot.
+    def verify_spawn_surface(tree)
+      manifest = YAML.load_file(File.join(tree, TebakoPythonBuilder::ImageManifest::PATH))
+      entries = manifest.dig("provides", "entrypoints") || []
+      entries.each do |entry|
+        name = entry["name"].to_s
+        path = entry["path"].to_s
+        if path != "/bin/#{name}"
+          raise TebakoPythonBuilder::Error.new(
+            "the env image manifest declares entrypoint '#{name}' at '#{path}' — the spawn " \
+            "surface's paths are /bin/<name>", 131
+          )
+        end
+        absolute = File.join(tree, path)
+        unless File.file?(absolute)
+          raise TebakoPythonBuilder::Error.new(
+            "the env image manifest declares entrypoint '#{path}' but the image holds no such file", 131
+          )
+        end
+      end
+      declared = entries.map { |entry| entry["name"].to_s }.sort
+      staged = File.directory?(File.join(tree, "bin")) ? Dir.children(File.join(tree, "bin")).sort : []
+      return if declared == staged
+
+      raise TebakoPythonBuilder::Error.new(
+        "the env image's spawn surface disagrees with its bin/ inventory " \
+        "(declared: #{declared.inspect}, staged: #{staged.inspect}) — every staged console " \
+        "script is declared and every declaration is held", 131
+      )
     end
   end
 end

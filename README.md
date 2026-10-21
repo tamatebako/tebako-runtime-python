@@ -36,7 +36,9 @@ its serving variable (the matrix grammar section below). The
 boot smoke asserts imports of json/ssl/zlib off the mounted image, the
 dlopen extension path, and the `TEBAKO_MOUNT_ROOT` 65/78 parity cases
 on POSIX, and the materialize boot (spec 17 §7) + bare + named-error
-trio (65/69/78) on windows, plus
+trio (65/69/78) on windows, the declared spawn surface
+(`--tebako-entry pip|pip3`, read back from the packed image) on every
+leg, plus
 the symbol-provenance gate everywhere.
 
 ## The driver is linked into the interpreter, not wrapped
@@ -192,12 +194,34 @@ an explicit bundled-wheel placement on msys (the install's `--root`
 rebase drive-strips the build-tree prefix — `PythonBuild#place_pip`).
 Anything else the install staged is pruned at image assembly.
 
-**The pip form is `python3 -m pip`.** The image's `bin/` directory is
-pruned wholesale: the ensurepip console scripts' shebangs spell the
-build prefix — dead links in any mounted layout — so no `pip3` script
-ships. This matches the ruby factory's no-entrypoints shape: the L1
-manifest declares no entrypoints and the release shard names the
-interpreter by convention.
+**The pip form is `tebako run python:pip`** (or a `python:pip` shim
+registered by `tebako install python:pip`); `python3 -m pip` stays the
+plain-interpreter spelling. The image ships its own console scripts at
+`/bin/pip` and `/bin/pip3`, generated at assembly from the INSTALLED
+pip's metadata (`site-packages/pip-*.dist-info/entry_points.txt`, the
+distribution's own `console_scripts` declaration —
+`ConsoleScripts`) rather than copied from `make install`'s `bin/`: the
+ensurepip scripts' shebangs spell the build-tree interpreter (dead host
+paths in any mounted layout), and the msys leg installs pip without
+ensurepip at all. The generated script's shebang names the in-image
+convention path (`<mount_root>/bin/python3`), never a host interpreter;
+the driver never consults it — spec 17 §1 composes
+`[interpreter, <resolved in-image path>, user args…]`, so the
+interpreter running the console script is the runtime exe itself.
+
+The scripts are the runtime's declared **spawn surface**
+(`provides.entrypoints` in the image's L1 manifest, spec 30 §2 /
+spec 07 §10): exactly one `{name, path: /bin/<name>}` per staged
+script, rendered from the staged `bin/` inventory and read back in both
+directions at assembly — every staged script is declared, every
+declaration is held (`ImageBuilder#verify_spawn_surface`). The boot
+smoke reads the declaration back out of the packed image with the tfs
+CLI and boots `--tebako-entry pip --version` / `pip3 --version` on the
+shipped pair, plus an undeclared name (the driver's named exit 65).
+`python3`/`python` are deliberately NOT declared: an entry is run BY
+the interpreter as a source file, so a binary alias would be parsed as
+Python — the bare engine form (`tebako run python`) is the
+interpreter's own surface.
 
 ## The windows boundary
 
@@ -225,13 +249,16 @@ issue-139 layout from day one — **no legacy monolith-only mode**):
 - `tebako-runtime-<tebako>-[<lang>-]<python>-<triplet>[.exe]` — the interpreter:
   `python3` with the spec-17 driver linked in (the fs TU as `main`).
 - `tebako-runtime-<tebako>-[<lang>-]<python>-<triplet>.tfs` — the env image:
-  stdlib + lib-dynload + the whitelisted site-packages + the preload
+  stdlib + lib-dynload + the whitelisted site-packages + the console
+  scripts at `/bin/pip`, `/bin/pip3` (the declared spawn surface) + the
+  preload
   shim (POSIX — REQUIRED here: the unpatched interpreter cannot read its
   own mounted image without it, so a missing shim is a hard build error,
   never the ruby factory's degrade) + the layout card
   (`lib/tebako/layout.yaml`: era 2, `mount_root_override` granted,
   `preload_shim` path) + the L1 payload manifest
-  (`__tpkg__/manifest.yaml`). Packed by `tfs mkimage` (the limnifs
+  (`__tpkg__/manifest.yaml`, carrying `provides.entrypoints`). Packed by
+  `tfs mkimage` (the limnifs
   writer — the current default format; a build-time factory tool, never
   a runtime dependency of the shipped package).
 - `<package>.manifest.json` — the package shard: the manifest entry
