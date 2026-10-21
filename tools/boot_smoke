@@ -72,6 +72,25 @@
 #                        openssl), the tier announces itself on stderr,
 #                        and sys.prefix is the extracted tree — NEVER
 #                        the baked root                            [windows]
+#   alias-closure        the self-containment proof (issue 55), both
+#                        scopes: the shipped PAIR's static import
+#                        table must be Windows system DLLs only (those
+#                        bind at process start, before any driver code
+#                        — the gettext closure is static-linked into
+#                        libpython3.14.dll), and the packed image's
+#                        library_aliases: must declare exactly the
+#                        IMAGE's non-system PE closure (the .pyd
+#                        extensions' libmpdec-4.dll/libzstd.dll and
+#                        theirs), with every declared path riding the
+#                        image (staged BESIDE the .pyd files, the
+#                        loader's own DLL-load-dir rule). Then the
+#                        shipped pair boots with PATH scrubbed to the
+#                        Windows system directories, imports the
+#                        alias-backed extensions (_decimal, _zstd), and
+#                        shows every declared name materialized on the
+#                        process PATH (the boot pass's read-back) — the
+#                        exact hostile-PATH shape that exited 127
+#                        before the fix                             [windows]
 #   socket-timeout       tools/socket_probe.py inside the runtime: the
 #                        pip connect modes — blocking urlopen (control),
 #                        positive-timeout create_connection (the exact
@@ -108,16 +127,25 @@
 # (CONFIGURE_CFLAGS_NODIST) — the tier-2 optimizer install at init
 # (PYTHON_JIT=1) is itself exercised by the boot surviving.
 #
-# POSIX legs run the full set. A windows leg runs bare + materialize-boot
-# + socket-timeout + e-flag + the named-error trio (bad-mount,
-# mount-root-malformed, override-ungranted) — the materialize tier
-# (spec 17 §7) is windows' visibility answer, so the in-image imports
-# stay POSIX-only (README's windows boundary).
+# POSIX legs run the full set — every boot under the inherited PATH (the
+# platform's own loader machinery needs it). A windows leg runs bare +
+# materialize-boot + alias-closure + socket-timeout + e-flag + the
+# named-error trio (bad-mount, mount-root-malformed, override-ungranted),
+# and EVERY windows boot's PATH is scrubbed to the Windows system
+# directories (System32 + the Windows root + Wbem) — no mingw/msys
+# toolchain directory, exactly the audience-rule condition and the
+# hostile-PATH shape issue 55 reproduced (exit 127 on a machine whose
+# PATH lacks the toolchain). The pair itself is static (its imports bind
+# before any driver code); the driver's library-alias boot pass carries
+# the IMAGE's extension-module support DLLs from there. The
+# materialize tier (spec 17 §7) is windows' visibility answer, so the
+# in-image imports stay POSIX-only (README's windows boundary).
 #
 # Usage:
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
 #                    [--scenario all|bare|boot|payload|entrypoint|bad-mount|
-#                                materialize-boot|socket-timeout|e-flag|
+#                                materialize-boot|alias-closure|
+#                                socket-timeout|e-flag|
 #                                mount-root-override|
 #                                mount-root-malformed|override-ungranted|jit]
 #
@@ -154,6 +182,10 @@ NON_EXECUTABLE_SUFFIXES = (IMAGE_SUFFIXES + MARKER_SUFFIXES).freeze
 ENV_SCRUBBED = %w[PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE
                   LD_PRELOAD DYLD_INSERT_LIBRARIES DYLD_FALLBACK_LIBRARY_PATH].freeze
 
+# The host platform, probed once: the boot helper's PATH policy and the
+# scenario selection both read it.
+BOOT_PLATFORM = TebakoPythonBuilder::Platform.new
+
 def usage_error(message)
   warn "boot_smoke: #{message}"
   exit 141
@@ -177,7 +209,7 @@ parser = OptionParser.new do |opts|
 end
 parser.parse!
 
-platform = TebakoPythonBuilder::Platform.new
+platform = BOOT_PLATFORM
 
 # --- artifact resolution ---------------------------------------------------
 
@@ -209,11 +241,20 @@ end
 
 # --- scenario drivers ------------------------------------------------------
 
-def boot(executable, argv, env_extra, timeout: BOOT_TIMEOUT)
+def boot(executable, argv, env_extra, timeout: BOOT_TIMEOUT, inherit_path: false)
   Dir.mktmpdir("tebako-python-boot-smoke") do |cwd|
     env = ENV_SCRUBBED.to_h { |key| [key, nil] }
     ENV.each_key { |key| env[key] = nil if key.start_with?("TEBAKO_") }
     env.merge!(env_extra)
+    # The windows legs' hostile PATH: EVERY booted runtime sees only the
+    # Windows system directories (the audience-rule condition — no
+    # mingw/msys toolchain). The pair is static-linked, and the driver's
+    # alias boot pass leads PATH with the materialized support-DLL copies
+    # for the image's extension modules, so the OS loader still binds
+    # those imports; a legacy host-PATH dependency exits 127 here, at
+    # build time, never at a consumer's run. `inherit_path: true` is the
+    # maintainer's debugging escape hatch, never a scenario's shape.
+    env["PATH"] = windows_system_path if BOOT_PLATFORM.msys? && !inherit_path
     # popen3 + a wait-deadline poll, NOT Timeout.timeout around capture3:
     # the Timeout unwind lands in popen3's ensure (wait_thr.join on the
     # still-immortal child) and blocks forever there, so the timeout
@@ -385,11 +426,21 @@ def jit_probe(line)
   end
 end
 
-KNOWN_SCENARIOS = %w[bare boot payload entrypoint bad-mount materialize-boot socket-timeout e-flag
-                     mount-root-override mount-root-malformed override-ungranted jit].freeze
-# Scenarios that build fixture images with the tfs CLI (entrypoint reads
-# the packed image back through it).
-TFS_SCENARIOS = %w[payload override-ungranted entrypoint].freeze
+# The PATH a windows boot gets on this leg: the Windows system directories
+# only (System32, the Windows root, Wbem) — never a mingw/msys toolchain
+# directory. This is the audience-rule condition (a bare windows machine)
+# and the exact shape issue 55 failed under; the driver's alias boot pass
+# is what carries the pair's support DLLs across.
+def windows_system_path
+  root = ENV.fetch("SystemRoot", ENV.fetch("SYSTEMROOT", "C:\\Windows"))
+  "#{root}\\System32;#{root};#{root}\\System32\\Wbem"
+end
+
+KNOWN_SCENARIOS = %w[bare boot payload entrypoint bad-mount materialize-boot alias-closure socket-timeout
+                     e-flag mount-root-override mount-root-malformed override-ungranted jit].freeze
+# Scenarios that build/read images with the tfs CLI (entrypoint and
+# alias-closure read the packed image back through it).
+TFS_SCENARIOS = %w[payload override-ungranted entrypoint alias-closure].freeze
 
 def selected_scenarios(platform, only)
   selected = []
@@ -398,8 +449,8 @@ def selected_scenarios(platform, only)
     selected += %w[boot payload mount-root-override jit] if
       %w[all boot payload mount-root-override jit].include?(only)
   else
-    selected += %w[materialize-boot socket-timeout e-flag] if
-      %w[all materialize-boot socket-timeout e-flag].include?(only)
+    selected += %w[materialize-boot alias-closure socket-timeout e-flag] if
+      %w[all materialize-boot alias-closure socket-timeout e-flag].include?(only)
   end
   selected += %w[bad-mount mount-root-malformed override-ungranted entrypoint] if
     %w[all bad-mount mount-root-malformed override-ungranted entrypoint].include?(only)
@@ -582,6 +633,136 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         %w[ctypes ssl].each do |marker|
           puts "     materialize-boot: #{marker}=#{out[/^#{marker}: (.+)$/, 1]}"
         end
+      when "alias-closure"
+        # The self-containment proof (issue 55), in two scopes:
+        #
+        #   * the RUNTIME PAIR (exe + libpython DLL) must import only
+        #     Windows system DLLs in its static import table — those bind
+        #     at PROCESS START, before any driver code, so the alias
+        #     channel cannot carry them; the gettext closure is bound
+        #     statically (PythonBuild's LIBS rewrite). A dynamic member
+        #     here is the reported exit 127;
+        #   * the IMAGE's PE modules (.pyd extensions) may bind support
+        #     DLLs at IMPORT time, and the manifest's library_aliases:
+        #     must declare exactly that closure with every declared path
+        #     held — the driver materializes the set and leads PATH.
+        #
+        # Then the shipped pair boots with PATH scrubbed to the Windows
+        # system directories (the boot helper does that for every msys
+        # boot), imports the alias-backed extensions (_decimal,
+        # _zstd — the v0.3.1 image's unshipped libmpdec-4.dll/libzstd.dll
+        # deps), and shows every declared name materialized on the
+        # process PATH. Everything here is a build-time failure, never a
+        # consumer's 126/127.
+        unless File.file?(image)
+          check("alias-closure", false, "no sibling env image #{image}")
+          next
+        end
+        if line.nil?
+          puts "note: alias-closure skipped — #{File.basename(executable)} is outside the runtime-name " \
+               "grammar, so the co-located libpython DLL cannot be named"
+          next
+        end
+        pair_dll = File.join(File.dirname(executable), line.msys_dll_name)
+        unless File.file?(pair_dll)
+          check("alias-closure: the co-located #{line.msys_dll_name} exists", false,
+                "#{pair_dll} is missing — the boot smoke could not materialize the pair")
+          next
+        end
+
+        pair_imports = TebakoPythonBuilder::PeImports.imports(executable)
+        check("alias-closure: the exe imports the co-located #{line.msys_dll_name}",
+              pair_imports.any? { |name| name.casecmp?(line.msys_dll_name) },
+              "exe imports: #{pair_imports.inspect}")
+        pair_closure = TebakoPythonBuilder::PeImports.closure(
+          [executable, pair_dll], search_dirs: [], provided: [line.msys_dll_name]
+        )
+        pair_missing = pair_closure[:missing].map do |entry|
+          "#{entry["name"]} (imported by #{File.basename(entry["importer"])})"
+        end
+        check("alias-closure: the pair's static imports are Windows system DLLs only", pair_missing.empty?,
+              "the loader binds these at process start, before any driver code — static-link them into " \
+              "the runtime (unresolved: #{pair_missing.uniq.join(", ")})")
+
+        readback = File.join(dir, "alias-readback")
+        out, st = Open3.capture2e(tfs, "extract", image, "-d", readback)
+        check("alias-closure: the image extracts through the tfs CLI", st.exitstatus&.zero?,
+              "tfs extract failed: #{out}")
+        manifest = begin
+          YAML.safe_load(File.read(File.join(readback, "__tpkg__", "manifest.yaml")))
+        rescue StandardError => e
+          check("alias-closure: the L1 manifest parses", false, "#{e.class}: #{e.message}")
+          next
+        end
+        declared = (manifest["library_aliases"] || []).map do |entry|
+          { "name" => entry["name"].to_s, "path" => entry["path"].to_s }
+        end
+        names = declared.map { |entry| entry["name"] }
+        image_roots = Dir.glob(File.join(readback, "**", "*.pyd"), File::FNM_CASEFOLD)
+        closure = TebakoPythonBuilder::PeImports.closure(
+          [executable, pair_dll] + image_roots,
+          search_dirs: [File.join(readback, "lib")], provided: [line.msys_dll_name]
+        )
+        unless closure[:missing].empty?
+          missing = closure[:missing].map do |entry|
+            "#{entry["name"]} (imported by #{File.basename(entry["importer"])})"
+          end
+          check("alias-closure: every non-system import of the image resolves in the image", false,
+                "unresolved: #{missing.uniq.join(", ")} (declared: #{names.inspect})")
+        end
+        expected = closure[:resolved].map { |entry| entry["name"].downcase }.sort
+        check("alias-closure: the manifest declares exactly the image's PE closure",
+              expected == names.map(&:downcase).sort,
+              "declared: #{names.sort.inspect}, closure: #{expected.inspect}")
+        declared.each do |entry|
+          check("alias-closure: #{entry['name']} arrives at #{entry['path']}",
+                entry["path"].start_with?("/lib/") &&
+                  entry["path"] == "/lib/#{entry["name"]}" &&
+                  File.file?(File.join(readback, entry["path"])),
+                "the extracted image holds no #{entry["path"]} for #{entry["name"]}")
+        end
+        puts "     alias-closure: declared #{names.sort.inspect} (the image's non-system closure)"
+
+        # The boot: PATH is already scrubbed by the boot helper (system
+        # dirs only). The probe prints the hostile PATH first (diagnostics
+        # survive an import failure), then imports the two extensions
+        # whose support DLLs the image could not carry before — the
+        # loader binds them from the .pyd's own directory
+        # (LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR; PATH is not consulted), and
+        # the driver's boot pass has materialized the declared aliases on
+        # PATH as the declaration's own read-back.
+        path_probe = <<~PY
+          import os, re, sys
+          print("BOOT-OK")
+          dirs = os.environ.get("PATH", "").split(os.pathsep)
+          print("path-dirs:", len(dirs))
+          # The failure mode is a TOOLCHAIN bin dir on PATH (ucrt64/bin,
+          # clangarm64/bin, mingw64/bin, msys2's usr/bin). A path that
+          # merely contains "msys64" is not the hazard: the runner's exec
+          # cache lives under the msys2 temp tree.
+          toolchain = re.compile(r"(?i)(^|[/\\])(ucrt64|clangarm64|mingw64)[/\\]bin$"
+                                 r"|^[a-z]:[/\\].*[/\\]msys64[/\\]usr[/\\]bin$")
+          print("path-scrubbed:", not any(toolchain.search(d) for d in dirs))
+          for name in sys.argv[1:]:
+              hit = next((os.path.join(d, name) for d in dirs if os.path.isfile(os.path.join(d, name))), "")
+              print("alias:", name, "->", hit or "MISSING")
+          import _decimal, _zstd
+          print("EXT-OK", _decimal.__name__, _zstd.__name__)
+        PY
+        out, err, st = boot(executable, ["-c", path_probe, *names], { "TEBAKO_RUNTIME_IMAGE" => image },
+                            timeout: MATERIALIZE_BOOT_TIMEOUT)
+        expect_ok("alias-closure: the pair boots with PATH scrubbed to the Windows system dirs", out, err, st, "BOOT-OK")
+        check("alias-closure: the alias-backed extensions import (_decimal, _zstd)",
+              out.include?("EXT-OK"), "stdout: #{out}\nstderr: #{err}")
+        check("alias-closure: no toolchain directory rides the boot PATH",
+              out.include?("path-scrubbed: True"), "stdout: #{out}\nstderr: #{err}")
+        names.each do |name|
+          check("alias-closure: the driver's PATH lead holds #{name}",
+                out.match?(/^alias: #{Regexp.escape(name)} -> (?!MISSING).+/),
+                "stdout: #{out}\nstderr: #{err}")
+        end
+        puts "     alias-closure: boot PATH dirs=#{out[/^path-dirs: (\d+)$/, 1]} " \
+             "aliases=#{names.sort.join(",")}"
       when "socket-timeout"
         # tools/socket_probe.py, run INSIDE the runtime (the probe rides
         # argv as a host script path — the stdlib comes off the image):

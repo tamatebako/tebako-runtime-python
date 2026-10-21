@@ -132,6 +132,37 @@ module TebakoPythonBuilder
       )
     end
 
+    # The gettext static closure (msys): libintl.a plus the archives its
+    # own references need (libiconv.a, libcharset.a). CPython's builtin
+    # _locale (Modules/Setup.bootstrap.in — why the import lives in the
+    # CORE) references gettext, and configure's
+    # AC_CHECK_LIB(intl, textdomain) prepends `-lintl` to LIBS: the
+    # IMPORT-library spelling binds libintl-8.dll into libpython3.14.dll,
+    # and the OS loader resolves that at PROCESS START — before any
+    # driver code, hence before the library_aliases PATH lead. MSYS2's
+    # gettext-runtime package ships the static archive too, so
+    # PythonBuild's LIBS rewrite binds gettext INTO the core and the
+    # pair's import table carries only Windows system DLLs. Order
+    # matters (single-pass GNU ld): libintl before its iconv/charset
+    # deps.
+    def intl_static_libs
+      return [] unless @platform.msys?
+
+      %w[intl iconv charset].map { |name| static_lib(name) }
+    end
+
+    # Replace the import-library token in a configure-emitted LIBS value
+    # with the static archives (intl_static_libs owns the set and order).
+    # Whole-token match only; a POSIX value (which never carries -lintl
+    # in this factory's link set) rides through untouched, and so does a
+    # value configure produced without gettext.
+    def bind_gettext_statically(value)
+      return value unless @platform.msys?
+
+      libs = intl_static_libs.join(" ")
+      value.gsub(/(?<!\S)-lintl(?!\S)/) { libs }
+    end
+
     private
 
     # The closure archives the platform's own static set already covers,

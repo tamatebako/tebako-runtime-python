@@ -53,6 +53,21 @@ RSpec.describe TebakoPythonBuilder::Mlibs do
       expect(libs).to include("-static-libgcc")
       expect(libs).not_to include("-l:libc++.a")
     end
+
+    it "binds gettext statically (configure's -lintl import-library spelling is replaced)" do
+      expect(mlibs.intl_static_libs).to eq(
+        %w[/deps/lib/libintl.a /deps/lib/libiconv.a /deps/lib/libcharset.a]
+      )
+      rewritten = mlibs.bind_gettext_statically("-lintl -static-libgcc -l:libwinpthread.a")
+      expect(rewritten).to eq(
+        "/deps/lib/libintl.a /deps/lib/libiconv.a /deps/lib/libcharset.a " \
+        "-static-libgcc -l:libwinpthread.a"
+      )
+      # A value without gettext (or a near-miss token) rides untouched.
+      expect(mlibs.bind_gettext_statically("-static-libgcc -l:libwinpthread.a"))
+        .to eq("-static-libgcc -l:libwinpthread.a")
+      expect(mlibs.bind_gettext_statically("-lintlx")).to eq("-lintlx")
+    end
   end
 
   context "on windows/arm64 (clangarm64, the llvm toolchain)" do
