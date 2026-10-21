@@ -740,8 +740,8 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
           # clangarm64/bin, mingw64/bin, msys2's usr/bin). A path that
           # merely contains "msys64" is not the hazard: the runner's exec
           # cache lives under the msys2 temp tree.
-          toolchain = re.compile(r"(?i)(^|[/\\])(ucrt64|clangarm64|mingw64)[/\\]bin$"
-                                 r"|^[a-z]:[/\\].*[/\\]msys64[/\\]usr[/\\]bin$")
+          toolchain = re.compile(r"(?i)(^|[/\\\\])(ucrt64|clangarm64|mingw64)[/\\\\]bin$"
+                                 r"|^[a-z]:[/\\\\].*[/\\\\]msys64[/\\\\]usr[/\\\\]bin$")
           print("path-scrubbed:", not any(toolchain.search(d) for d in dirs))
           for name in sys.argv[1:]:
               hit = next((os.path.join(d, name) for d in dirs if os.path.isfile(os.path.join(d, name))), "")
