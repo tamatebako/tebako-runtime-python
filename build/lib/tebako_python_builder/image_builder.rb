@@ -51,6 +51,16 @@ module TebakoPythonBuilder
   # *disabled* extensions' python sides, and the test suite) are the v1
   # hermetic-core call: the runtime answers "no such module" by absence,
   # never by a broken import.
+  #
+  # MSYS builds also carry the IMAGE's non-system PE import closure
+  # BESIDE the .pyd files in lib/ (SupportDlls: the extensions'
+  # libmpdec-4.dll/libzstd.dll deps — issue 55's class) and declare it
+  # in the manifest's `library_aliases:`. The placement matches the
+  # loader's rule for extension modules (LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR:
+  # the .pyd's own directory is searched, PATH is not), so the imports
+  # bind on a bare windows machine. The runtime pair's OWN imports are a
+  # separate, earlier gate: they bind at process start and must be
+  # static (SupportDlls refuses a dynamic member by name).
   class ImageBuilder
     # The env image's own contract declaration (spec 18 C3), read by the
     # driver post-mount, before the interpreter starts: a missing layout
@@ -95,7 +105,7 @@ module TebakoPythonBuilder
     PRUNE_DYNLOAD_GLOBS = %w[_test* _ctypes_test* xxsubtype* _xx*].freeze
 
     def initialize(platform:, python_version:, tebako_version:, src_sha256:, patch_set:, # rubocop:disable Metrics/ParameterLists,Metrics/MethodLength
-                   link_unit:, link_unit_dir:, repo_root:)
+                   link_unit:, link_unit_dir:, repo_root:, runtime_pair: [], support_dll_prefixes: nil)
       @platform = platform
       @python = TebakoPythonBuilder::PythonVersion.new(python_version)
       @tebako_version = tebako_version
@@ -104,6 +114,15 @@ module TebakoPythonBuilder
       @link_unit = link_unit
       @link_unit_dir = link_unit_dir
       @repo_root = repo_root
+      # The windows runtime pair (the built exe + its libpython DLL) —
+      # the PE closure stager's roots. Ignored on POSIX (the closure is a
+      # windows contract; ELF/Mach-O dependencies ride the platform's
+      # own machinery).
+      @runtime_pair = runtime_pair
+      # The msys toolchain prefixes the closure resolves members from
+      # (default: the platform's own discovery).
+      @support_dll_prefixes = support_dll_prefixes
+      @library_aliases = []
     end
 
     # Copy the staged prefix tree into a fresh tree at dest and deploy the
@@ -116,10 +135,12 @@ module TebakoPythonBuilder
       prune(dest)
       deploy_console_scripts(dest)
       flatten_nt_layout(dest) if @platform.msys?
+      deploy_support_dlls(dest) if @platform.msys?
       deploy_preload(dest)
       deploy_layout(dest)
       deploy_manifest(dest)
       verify_spawn_surface(dest)
+      verify_library_aliases(dest) if @platform.msys?
       dest
     end
 
@@ -248,13 +269,40 @@ module TebakoPythonBuilder
       puts "   ... env image console scripts: #{@entrypoints.map { |name| "/bin/#{name}" }.join(", ")}"
     end
 
+    # The msys support DLLs: the image's non-system PE import closure
+    # (the .pyd extension modules' dependencies — _decimal's
+    # libmpdec-4.dll, _zstd's libzstd.dll, and their own closure),
+    # staged BESIDE the .pyd files in the image's lib/ and declared in
+    # the manifest's library_aliases:. The placement is the loader's own
+    # rule: CPython loads a .pyd with LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+    # so a support DLL in the same directory binds without PATH (which
+    # the hardened loader ignores). SupportDlls is fail-closed in both
+    # directions:
+    # the RUNTIME PAIR must be system-only (its imports bind before any
+    # driver code — a dynamic member there is a named error pointing at
+    # the static bind), and an image member the toolchain does not hold
+    # is a named error here, never a consumer's exit 126/127. Its return
+    # value is the declaration the manifest renders, so declared ==
+    # staged by construction.
+    def deploy_support_dlls(tree)
+      @library_aliases = TebakoPythonBuilder::SupportDlls.new(
+        platform: @platform,
+        runtime_pair: @runtime_pair,
+        image_roots: TebakoPythonBuilder::SupportDlls.image_pe_files(tree),
+        prefixes: @support_dll_prefixes
+      ).stage(File.join(tree, "lib"))
+      names = @library_aliases.map { |entry| entry["name"] }
+      puts "   ... env image support DLLs: #{names.join(", ")} (declared as library_aliases:)"
+    end
+
     def deploy_manifest(tree)
       path = TebakoPythonBuilder::ImageManifest.new(platform: @platform,
                                                     python_version: @python.python_version,
                                                     tebako_version: @tebako_version,
                                                     patch_set: @patch_set,
                                                     src_sha256: @src_sha256,
-                                                    entrypoints: @entrypoints).deploy(tree)
+                                                    entrypoints: @entrypoints,
+                                                    library_aliases: @library_aliases).deploy(tree)
       puts "   ... env image payload manifest: #{path}"
     end
 
@@ -262,7 +310,9 @@ module TebakoPythonBuilder
     # both directions): the manifest WRITTEN to the image is re-read from
     # disk, every declared name must be a file the image holds at exactly
     # the declared path, and every staged bin/ member must be declared.
-    # A one-sided drift — a script staged without a declaration, or a
+    # The msys support DLLs live in lib/ (beside the .pyd files), so bin/
+    # is exactly the console-script inventory on every platform. A
+    # one-sided drift — a script staged without a declaration, or a
     # declaration whose file never landed — fails the build here (131),
     # never at a consumer's boot.
     def verify_spawn_surface(tree)
@@ -292,6 +342,75 @@ module TebakoPythonBuilder
         "the env image's spawn surface disagrees with its bin/ inventory " \
         "(declared: #{declared.inspect}, staged: #{staged.inspect}) — every staged console " \
         "script is declared and every declaration is held", 131
+      )
+    end
+
+    # The alias read-back gate (the spawn-surface gate's twin): re-read
+    # the manifest, assert the bare-name grammar, that every declared
+    # path is exactly /bin/<name> and names a regular file the image
+    # holds, that no name repeats, and — the acceptance the issue asks
+    # for — that the image's PE closure over the IMAGE'S OWN BYTES is
+    # exactly the declared set (pair and every .pyd/.dll the image
+    # holds). A missing member or a stale declaration fails the build
+    # here (131), never an exit 126/127 at a consumer's run.
+    def verify_library_aliases(tree)
+      manifest = YAML.load_file(File.join(tree, TebakoPythonBuilder::ImageManifest::PATH))
+      declared = manifest["library_aliases"] || []
+      keys = declared.map { |entry| entry["name"].to_s.downcase }
+      if keys.uniq.length != keys.length
+        raise TebakoPythonBuilder::Error.new(
+          "the env image manifest declares a library alias more than once (#{keys.inspect}) — " \
+          "the driver refuses a duplicate by name (exit 65)", 131
+        )
+      end
+
+      declared.each do |entry|
+        name = entry["name"].to_s
+        path = entry["path"].to_s
+        if name.empty? || name.match?(%r{[/\\:]})
+          raise TebakoPythonBuilder::Error.new(
+            "the env image manifest declares library alias '#{name}' — an alias name is the bare " \
+            "loader spelling (no path separator, no drive qualifier)", 131
+          )
+        end
+        if path != "/#{TebakoPythonBuilder::SupportDlls::IN_IMAGE_SUPPORT}/#{name}"
+          raise TebakoPythonBuilder::Error.new(
+            "the env image manifest declares library alias '#{name}' at '#{path}' — support DLLs " \
+            "are declared at /lib/<name> (beside the .pyd files)", 131
+          )
+        end
+        unless File.file?(File.join(tree, path))
+          raise TebakoPythonBuilder::Error.new(
+            "the env image manifest declares library alias '#{path}' but the image holds no such file", 131
+          )
+        end
+      end
+
+      roots = @runtime_pair + TebakoPythonBuilder::SupportDlls.image_pe_files(tree)
+      closure = TebakoPythonBuilder::PeImports.closure(
+        roots, search_dirs: [File.join(tree, TebakoPythonBuilder::SupportDlls::IN_IMAGE_SUPPORT)],
+        provided: [@python.msys_dll_name]
+      )
+      unless closure[:missing].empty?
+        missing = closure[:missing].map { |entry| "#{entry["name"]} (imported by #{File.basename(entry["importer"])})" }
+        raise TebakoPythonBuilder::Error.new(
+          "the image's PE closure does not resolve inside the env image: #{missing.uniq.join(", ")}", 131
+        )
+      end
+      closure_names = closure[:resolved].map { |entry| entry["name"].downcase }.sort
+      staged_dlls = Dir.glob(File.join(tree, TebakoPythonBuilder::SupportDlls::IN_IMAGE_SUPPORT, "*.dll"),
+                             File::FNM_CASEFOLD).map { |path| File.basename(path).downcase }.sort
+      unless staged_dlls == keys.sort
+        raise TebakoPythonBuilder::Error.new(
+          "the env image's lib/ DLL inventory disagrees with its library_aliases: declarations " \
+          "(staged: #{staged_dlls.inspect}, declared: #{keys.sort.inspect})", 131
+        )
+      end
+      return if closure_names == keys.sort
+
+      raise TebakoPythonBuilder::Error.new(
+        "the env image's library_aliases: declarations disagree with the image's PE closure " \
+        "(declared: #{keys.sort.inspect}, closure: #{closure_names.inspect})", 131
       )
     end
   end

@@ -169,11 +169,16 @@ module TebakoPythonBuilder
     end
 
     def assemble_and_pack_image(build, sha256, link_unit, link_unit_dir, tfs)
+      # The windows runtime pair the PE closure starts from: the
+      # driver-linked exe and the libpython DLL beside it in the build
+      # tree (the shared build's own spelling). POSIX ignores the pair —
+      # the class-L alias channel is a windows contract.
+      runtime_pair = [build.exe_path, File.join(File.dirname(build.exe_path), @python.msys_dll_name)]
       tree = TebakoPythonBuilder::ImageBuilder.new(platform: @platform, python_version: @python_version,
                                                    tebako_version: @tebako_version, src_sha256: sha256,
                                                    patch_set: @src_release,
                                                    link_unit: link_unit, link_unit_dir: link_unit_dir,
-                                                   repo_root: @repo_root)
+                                                   repo_root: @repo_root, runtime_pair: runtime_pair)
                                               .assemble(build.staged_prefix_tree, File.join(@prefix, "image-tree"))
       TebakoPythonBuilder::ImagePackager.new(@platform, tfs: tfs).package(tree, image_output)
     end

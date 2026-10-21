@@ -55,18 +55,31 @@ module TebakoPythonBuilder
   # driver extracts the mounted+verified images into the exec cache and
   # rewires the runtime root to the extracted host tree. POSIX builds
   # omit the key — their boots read the mounts directly and never read
-  # it.
+  # it. MSYS builds also declare `library_aliases:` (spec 03 §2.5,
+  # schema_minor 2): exactly the support DLLs the image holds under
+  # bin/ — the IMAGE's non-system PE import closure (the .pyd modules'
+  # libmpdec-4.dll/libzstd.dll and their own closure; SupportDlls stages
+  # them and returns these declarations). The driver's boot pass
+  # materializes each declared name and leads PATH with the copies, so
+  # the OS loader binds those imports from the package and a bare
+  # windows machine's PATH stops mattering. (The runtime pair's own
+  # imports bind earlier — at process start — and are gated as
+  # static-only by SupportDlls, never carried by this channel.) The key
+  # is omitted when empty: an image with no non-system imports needs no
+  # channel.
   class ImageManifest
     # In-image location the driver reads (tpkg::PAYLOAD_MANIFEST_PATH).
     PATH = File.join("__tpkg__", "manifest.yaml").freeze
 
-    def initialize(platform:, python_version:, tebako_version:, patch_set:, src_sha256:, entrypoints: [])
+    def initialize(platform:, python_version:, tebako_version:, patch_set:, src_sha256:, entrypoints: [],
+                   library_aliases: [])
       @platform = platform
       @python_version = python_version
       @tebako_version = tebako_version
       @patch_set = patch_set
       @src_sha256 = src_sha256
       @entrypoints = entrypoints
+      @library_aliases = library_aliases
     end
 
     # Write the manifest into the assembled layout tree (before the image
@@ -79,11 +92,15 @@ module TebakoPythonBuilder
     end
 
     def to_h
-      {
+      manifest = {
         "schema_version" => 1,
         "identity" => identity,
         "provides" => provides
       }
+      unless @library_aliases.empty?
+        manifest["library_aliases"] = @library_aliases.sort_by { |entry| entry["name"].downcase }
+      end
+      manifest
     end
 
     private

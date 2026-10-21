@@ -27,6 +27,7 @@
 
 require "spec_helper"
 require "fileutils"
+require "pe_fixture"
 require "tmpdir"
 require "yaml"
 
@@ -39,6 +40,8 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
   # kept site-packages member (build/site-packages.yml's whitelist) and a
   # pruned one, pip's dist-info (the console scripts' metadata owner), the
   # prunable top-level surface, and a prunable test-extension glob member.
+  # The .pyd files are synthetic PE images — the msys image builder walks
+  # every PE file the image holds for its import closure.
   def stage_prefix(dir)
     libdir = File.join(dir, "lib", "python3.14")
     FileUtils.mkdir_p(File.join(libdir, "encodings"))
@@ -51,8 +54,10 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
     FileUtils.mkdir_p(File.join(dir, "lib", "pkgconfig"))
     File.write(File.join(libdir, "os.py"), "# os\n")
     File.write(File.join(libdir, "encodings", "__init__.py"), "# encodings\n")
-    File.write(File.join(libdir, "lib-dynload", "_socket.pyd"), "pyd\n")
-    File.write(File.join(libdir, "lib-dynload", "_testcapi.pyd"), "pyd\n")
+    PeFixture.write_pe(File.join(libdir, "lib-dynload", "_socket.pyd"), imports: %w[libpython3.14.dll])
+    PeFixture.write_pe(File.join(libdir, "lib-dynload", "_decimal.pyd"),
+                       imports: %w[libpython3.14.dll libzstd.dll])
+    PeFixture.write_pe(File.join(libdir, "lib-dynload", "_testcapi.pyd"), imports: %w[libpython3.14.dll])
     File.write(File.join(libdir, "site-packages", "pip", "__init__.py"), "# pip\n")
     File.write(File.join(libdir, "site-packages", "pip-99.0.dist-info", "entry_points.txt"),
                "[console_scripts]\npip=pip._internal.cli.main:main\npip3=pip._internal.cli.main:main\n")
@@ -63,16 +68,31 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
     dir
   end
 
-  def builder_for(platform, link_unit: nil, link_unit_dir: nil)
+  # The windows runtime pair (the exe + its libpython DLL) the PE
+  # closure starts from, and the toolchain prefix its members resolve
+  # from. libzstd.dll is the staged alias in these fixtures.
+  def windows_pair(dir)
+    build = File.join(dir, "build")
+    PeFixture.dll(build, "libpython3.14.dll", imports: %w[kernel32.dll])
+    exe = PeFixture.dll(build, "python.exe", imports: %w[kernel32.dll libpython3.14.dll])
+    prefix = File.join(dir, "ucrt64")
+    PeFixture.dll(File.join(prefix, "bin"), "libzstd.dll", imports: %w[kernel32.dll])
+    [[exe, File.join(build, "libpython3.14.dll")], prefix]
+  end
+
+  def builder_for(platform, link_unit: nil, link_unit_dir: nil, runtime_pair: [], support_dll_prefixes: nil)
     described_class.new(platform: platform, python_version: "3.14.7", tebako_version: "9.9.9",
                         src_sha256: "ab" * 32, patch_set: "v0.0.0",
-                        link_unit: link_unit, link_unit_dir: link_unit_dir, repo_root: REPO_ROOT)
+                        link_unit: link_unit, link_unit_dir: link_unit_dir, repo_root: REPO_ROOT,
+                        runtime_pair: runtime_pair, support_dll_prefixes: support_dll_prefixes)
   end
 
   it "flattens an msys image into the NT getpath layout (lib/ is Lib and platstdlib in one)" do
     Dir.mktmpdir("tebako-python-image-builder") do |dir|
       dest = File.join(dir, "image")
-      builder_for(msys_platform).assemble(stage_prefix(File.join(dir, "staged")), dest)
+      runtime_pair, prefix = windows_pair(dir)
+      builder_for(msys_platform, runtime_pair: runtime_pair, support_dll_prefixes: [prefix])
+        .assemble(stage_prefix(File.join(dir, "staged")), dest)
 
       # The stdlib and the extension modules answer <prefix>/Lib and
       # <prefix>/lib — one directory on the windows filesystem.
@@ -86,12 +106,14 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
       expect(File.exist?(File.join(dest, "lib", "test"))).to be false
       expect(File.file?(File.join(dest, "lib", "site-packages", "pip", "__init__.py"))).to be true
       expect(File.exist?(File.join(dest, "lib", "site-packages", "yaml"))).to be false
-      # bin/ holds the image's own console scripts (never the staged
-      # install's), and the manifest declares exactly them.
+      # bin/ holds the image's own console scripts; the support DLL the
+      # extension modules import sits BESIDE their .pyd (lib/), the
+      # loader's DLL-load-dir rule, and the manifest declares it.
       expect(Dir.children(File.join(dest, "bin")).sort).to eq(%w[pip pip3])
+      expect(File.file?(File.join(dest, "lib", "libzstd.dll"))).to be true
       # The tebako surface: the layout card keeps its contractual path
-      # and declares the runtime DLL; the manifest grants the tier and
-      # declares the spawn surface.
+      # and declares the runtime DLL; the manifest grants the tier,
+      # declares the spawn surface and the alias set.
       layout = YAML.load_file(File.join(dest, "lib", "tebako", "layout.yaml"))
       expect(layout["mount_root"]).to eq("A:/t")
       expect(layout["runtime_dll"]).to eq("libpython3.14.dll")
@@ -100,6 +122,28 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
       expect(manifest["provides"]["entrypoints"]).to eq(
         [{ "name" => "pip", "path" => "/bin/pip" }, { "name" => "pip3", "path" => "/bin/pip3" }]
       )
+      expect(manifest["library_aliases"]).to eq(
+        [{ "name" => "libzstd.dll", "path" => "/lib/libzstd.dll" }]
+      )
+    end
+  end
+
+  it "refuses an msys image whose runtime pair still binds a dynamic import" do
+    Dir.mktmpdir("tebako-python-image-builder") do |dir|
+      build = File.join(dir, "build")
+      PeFixture.dll(build, "libpython3.14.dll", imports: %w[kernel32.dll libintl-8.dll])
+      exe = PeFixture.dll(build, "python.exe", imports: %w[kernel32.dll libpython3.14.dll])
+      prefix = File.join(dir, "ucrt64")
+      PeFixture.dll(File.join(prefix, "bin"), "libintl-8.dll", imports: %w[kernel32.dll])
+
+      expect do
+        builder_for(msys_platform, runtime_pair: [exe, File.join(build, "libpython3.14.dll")],
+                                   support_dll_prefixes: [prefix])
+          .assemble(stage_prefix(File.join(dir, "staged")), File.join(dir, "image"))
+      end.to raise_error(TebakoPythonBuilder::Error) do |error|
+        expect(error.error_code).to eq(131)
+        expect(error.message).to include("libintl-8.dll")
+      end
     end
   end
 

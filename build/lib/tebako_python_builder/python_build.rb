@@ -528,6 +528,7 @@ module TebakoPythonBuilder
       targets.each do |path|
         content = File.read(path)
         substitutions.each { |(pattern, replacement)| content = content.gsub(pattern, replacement) }
+        content = bind_gettext_statically(content) if @platform.msys?
         content += "\n#{MARKER}\nTEBAKO_LIBS=\t#{mlibs.tebako_libs}\n" \
                    "Programs/tebako_python.o: Programs/tebako_python.c $(PYTHON_HEADERS)\n" \
                    "\t$(CC) -c $(PY_CORE_CFLAGS) -o $@ $<\n"
@@ -536,6 +537,21 @@ module TebakoPythonBuilder
 
       verify_substitutions(durable)
       puts "   ... Makefile substitutions applied (#{targets.map { |t| File.basename(t) }.join(", ")})"
+    end
+
+    # The gettext static bind (msys only): configure's
+    # AC_CHECK_LIB(intl, textdomain) prepends the import-library spelling
+    # `-lintl` to LIBS, so the exe's and libpython's link tail binds
+    # libintl-8.dll into the pair — and the OS loader resolves that
+    # import at PROCESS START, before the driver's library_aliases PATH
+    # lead can run. Mlibs#bind_gettext_statically swaps the token for the
+    # static archives, so the pair's import table is system-only. Applied
+    # per LIBS line only: the token is meaningful nowhere else in the
+    # generated files.
+    def bind_gettext_statically(content)
+      content.gsub(/^LIBS=(.*)$/) do |line|
+        "LIBS=#{mlibs.bind_gettext_statically(line.delete_prefix("LIBS="))}"
+      end
     end
 
     # The exe link recipe substitution, platform-shaped. POSIX keeps
@@ -574,6 +590,9 @@ module TebakoPythonBuilder
       # anchor drifted (reindented, respelled) under a version that still
       # carries the rules — a named error here, not a parse mystery in CI.
       missing << "the WASM_ASSETS_DIR prefix binding" if content.match?(/^WASM_ASSETS_DIR=\.\$\(prefix\)$/)
+      if @platform.msys? && content.match?(/^LIBS=.*(?<!\S)-lintl(?!\S)/)
+        missing << "the static gettext binding (-lintl survived in LIBS)"
+      end
       mlibs.modlib_rewrites.each_key do |key|
         missing << key unless content =~ /^#{key}=\S/
       end

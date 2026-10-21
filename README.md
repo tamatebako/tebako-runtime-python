@@ -35,8 +35,12 @@ disabled until the product publishes its link unit and the owner arms
 its serving variable (the matrix grammar section below). The
 boot smoke asserts imports of json/ssl/zlib off the mounted image, the
 dlopen extension path, and the `TEBAKO_MOUNT_ROOT` 65/78 parity cases
-on POSIX, and the materialize boot (spec 17 §7) + bare + named-error
-trio (65/69/78) on windows, the declared spawn surface
+on POSIX, and on windows the materialize boot (spec 17 §7) + bare +
+named-error trio (65/69/78) + the self-containment proof (the
+`alias-closure` scenario: the pair's static import table is
+system-only, the image declares exactly its non-system PE closure as
+`library_aliases:`, and every boot runs with PATH scrubbed to the
+Windows system directories), the declared spawn surface
 (`--tebako-entry pip|pip3`, read back from the packed image) on every
 leg, plus
 the symbol-provenance gate everywhere.
@@ -241,6 +245,44 @@ the exe), and the mingw support set (libgcc/libwinpthread) is
 statically linked into the runtime's own PE modules — a bare machine
 installs nothing.
 
+**The pair is self-contained at process start.** The CPython core's
+builtin `_locale` references gettext, and upstream's
+`AC_CHECK_LIB(intl, textdomain)` prepends `-lintl` to `LIBS` — the
+import-library spelling, which bound `libintl-8.dll` into
+`libpython3.14.dll`. Nothing on a bare windows machine provides it, and
+the OS loader resolves the import **before any driver code runs**, so
+no boot-time mechanism (not the alias pass, not the materialize tier)
+can supply it; the pair exited 127. `PythonBuild` rewrites the
+generated Makefile's `LIBS` line to the static archives
+(`libintl.a` + `libiconv.a` + `libcharset.a`, resolved from the msys
+toolchain — the same static-bind rule as libffi), so the pair's import
+table is Windows system DLLs only. `SupportDlls` fails the build by
+name if a dynamic member ever returns.
+
+**The image's extensions ride the image, beside their `.pyd`.** The
+`.pyd` modules load at import time, so their non-system imports ride
+the env image: `SupportDlls` walks the PE closure of the runtime pair +
+every `.pyd`/`.dll` in the assembled image, stages each non-system
+member into the image's `lib/` next to the extension modules
+(`_decimal` → `libmpdec-4.dll` → `libgcc_s_seh-1.dll` /
+`libwinpthread-1.dll`; `_zstd` → `libzstd.dll`), and the manifest
+declares exactly those names in `library_aliases:` (spec 03 §2.5). The
+placement is what binds: CPython loads a `.pyd` with
+`LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR`
+(the bpo-36085 hardening), so the extension's own directory is
+searched and PATH is not — the v0.3.2 run's `import _decimal` failure
+with the DLLs under `bin/` and PATH-led proved that distinction. The
+driver still materializes the declared set and leads PATH with it
+(visible as the declaration read-back). A member the toolchain does not
+hold is a named build error (131), never a consumer's 126/127.
+
+`tools/boot_smoke` proves both scopes at build time: the
+`alias-closure` scenario re-reads the packed image's manifest, walks
+the imported bytes against the declared set, and boots the pair with
+PATH scrubbed to the Windows system directories (no mingw/msys
+directory) while importing `_decimal` and `_zstd` — each windows boot
+in the smoke runs under that hostile PATH.
+
 ## The artifacts (per version × triplet)
 
 The publish layout mirrors tebako-runtime-ruby's current shape (its
@@ -251,13 +293,16 @@ issue-139 layout from day one — **no legacy monolith-only mode**):
 - `tebako-runtime-<tebako>-[<lang>-]<python>-<triplet>.tfs` — the env image:
   stdlib + lib-dynload + the whitelisted site-packages + the console
   scripts at `/bin/pip`, `/bin/pip3` (the declared spawn surface) + the
+  windows support DLLs beside the `.pyd` files in `lib/` (the modules'
+  PE import closure, declared as `library_aliases:`) + the
   preload
   shim (POSIX — REQUIRED here: the unpatched interpreter cannot read its
   own mounted image without it, so a missing shim is a hard build error,
   never the ruby factory's degrade) + the layout card
   (`lib/tebako/layout.yaml`: era 2, `mount_root_override` granted,
   `preload_shim` path) + the L1 payload manifest
-  (`__tpkg__/manifest.yaml`, carrying `provides.entrypoints`). Packed by
+  (`__tpkg__/manifest.yaml`, carrying `provides.entrypoints` and, on
+  windows, `library_aliases`). Packed by
   `tfs mkimage` (the limnifs
   writer — the current default format; a build-time factory tool, never
   a runtime dependency of the shipped package).
@@ -423,17 +468,21 @@ platform ships).
   `EXPECTED_ENV_MATRIX`/`EXPECTED_PYTHON_MATRIX` rows.
 - `tools/build_runtime` — the build entry point (fetch → verify → build
   → link → pack → package → sidecars).
-- `tools/boot_smoke` — the post-build acceptance gate (8 scenarios, 16
-  checks): stdlib + ssl + zlib imports off the mounted image, the dlopen
+- `tools/boot_smoke` — the post-build acceptance gate (12 scenarios):
+  stdlib + ssl + zlib imports off the mounted image, the dlopen
   extension path, the `TEBAKO_MOUNT_ROOT` 65/78 parity cases, the
-  bare-exe dev-mode contract, and the `jit` flavor probe (a jit line
+  bare-exe dev-mode contract, the `jit` flavor probe (a jit line
   reports the JIT capability under `PYTHON_JIT=1`, a plain line reports
-  its absence). Needs `TEBAKO_TFS` (the tfs CLI, for the mount probe) and
+  its absence), and on windows the `alias-closure` self-containment
+  proof (static-import-only pair, the image's declared PE closure, and
+  every boot under a PATH scrubbed to the Windows system directories).
+  Needs `TEBAKO_TFS` (the tfs CLI, for the mount probe) and
   the runtime-packages tree.
 - `build/lib/tebako_python_builder/` — the build model (the
   tebako-runtime-ruby `build/lib` port): Contract, Platform,
   PythonVersion, SourceFetcher, LinkUnit, Mlibs, PythonBuild,
-  ImageBuilder, ImageManifest, ImagePackager, TfsTool, Builder.
+  ImageBuilder, ImageManifest, ImagePackager, PeImports, SupportDlls,
+  TfsTool, Builder.
 - `build/resources/tebako_python_main.c` — the fs TU template (the
   interpreter's real `main`; see the re-exec section).
 - `build/site-packages.yml` — the declarative site-packages whitelist.
