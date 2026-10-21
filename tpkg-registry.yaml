@@ -223,6 +223,28 @@ payloads:
         sha256: db061a42882eef780d730508b20b4e31822432e82eebc9ffc95d11f54d23ed77
     release:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.0
+  - version: 3.11.16-0.3.1
+    platforms:
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.11.16-linux-gnu-arm64.tfs
+        sha256: c603b4957f634afdfc0aff8d7e41e5db3f63b00af50d3ddbee8c98a0cb450fbb
+      aarch64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.11.16-linux-musl-arm64.tfs
+        sha256: 8ec4321367e46d50f2b54136d66d639fb551067ec4baff36e6ace2fbc04363c3
+      aarch64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.11.16-macos-arm64.tfs
+        sha256: dd3ef9196fddae23d2a0ef4c6a35668fc04c122d1e1d509128c386cf96033904
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.11.16-linux-gnu-x86_64.tfs
+        sha256: d55b1bb456a3309cbe6775e7a749444fda2161645c7ef212d76a41d03c80150f
+      x86_64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.11.16-linux-musl-x86_64.tfs
+        sha256: a2211b7061fcd70995e4cf348d736debf80a6dc376608329203281ecbe19a827
+      x86_64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.11.16-macos-x86_64.tfs
+        sha256: 5a27d349828ce43716818cd118ae6cf4dd92a932e722e1f2dd857a171cb18870
+    release:
+      ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.1
   - version: 3.12.14-0.2.0
     platforms:
       aarch64-linux-gnu:
@@ -421,6 +443,28 @@ payloads:
         sha256: 37c9ad46bdc681b917c3adc6df0df32af9c8b6e243554feb4e2134ae79a908fc
     release:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.0
+  - version: 3.12.14-0.3.1
+    platforms:
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.12.14-linux-gnu-arm64.tfs
+        sha256: de926eafa675963cdab71818ff768f3923140353e46ba1a0f14c7ecc556da32c
+      aarch64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.12.14-linux-musl-arm64.tfs
+        sha256: 01a21e8a9bf7e9b8dd49297515d59a2cef5bcd8a9c68f00a89983b2173de5d28
+      aarch64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.12.14-macos-arm64.tfs
+        sha256: dee0475a34bf8f2f4f3de31a7fa5eba6b3c965c5ed2fac1609132b0688ee746a
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.12.14-linux-gnu-x86_64.tfs
+        sha256: 052c4270295be44b4fe56f54a903f0f36368cf3b7b4de9bad0c15e2c94363f2e
+      x86_64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.12.14-linux-musl-x86_64.tfs
+        sha256: daef4bd3d605c0a4437285b13ecf1f3c482f677892d30e238c4266f0510e337e
+      x86_64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.12.14-macos-x86_64.tfs
+        sha256: 71e6b9b6ba8e83860c355001ba26ab0ec8fb81fa8e01e00a5e48f74f06c76c16
+    release:
+      ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.1
   - version: 3.13.15-jit-0.2.0
     platforms:
       aarch64-linux-gnu:
@@ -565,6 +609,22 @@ payloads:
         sha256: 17c53ee4c9fec383dc91a133b8e5fee2a3754aca4d94f13c2dc890977c954005
     release:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.0
+  - version: 3.13.15-jit-0.3.1
+    platforms:
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-jit-linux-gnu-arm64.tfs
+        sha256: 32f13f3283c6db0780154332b057da009922189751c076dbd92b8d48d55edebb
+      aarch64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-jit-macos-arm64.tfs
+        sha256: 49f973a6c60b673a74ddbe0a4dc1f57134548a8f4db3ba179045dda0829eeac8
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-jit-linux-gnu-x86_64.tfs
+        sha256: c5b3d1dd7f82dddcbbc414435f63c2fd51255f4c5ef77b81f56ef47e0c6dafc6
+      x86_64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-jit-macos-x86_64.tfs
+        sha256: 7efc6c646d02c77df5c860b0daf5fd3034dacc5d900d4d2fbc5eee799c6ce363
+    release:
+      ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.1
   - version: 3.13.15-0.2.0
     platforms:
       aarch64-linux-gnu:
@@ -763,6 +823,28 @@ payloads:
         sha256: 28d86255d984e10e4ebc30b9f2f64ffebe5a9852620c9622096a7d1b955315ae
     release:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.0
+  - version: 3.13.15-0.3.1
+    platforms:
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-linux-gnu-arm64.tfs
+        sha256: c4a172a7558f40d3df162c0f2beebdb63a7fd13d5d858030a71b0f7704fe182b
+      aarch64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-linux-musl-arm64.tfs
+        sha256: ba6b0f7a01fe3f4391a63cad9d2cc0f15afb194522618dbda210904dd500d01b
+      aarch64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-macos-arm64.tfs
+        sha256: a03e6a26d07d7dda6581f038ccaa19d8e2ba4c9d1b0aacec19c2f68a5d3c842a
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-linux-gnu-x86_64.tfs
+        sha256: 9ea0a5444e54c97b247e64442827bf89f351aee381825e117c8f4097f81406e8
+      x86_64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-linux-musl-x86_64.tfs
+        sha256: ba67a61ac36e61ee0cb48cd6addc4812007a92ca2eecdeda2921dd438aefe06e
+      x86_64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.13.15-macos-x86_64.tfs
+        sha256: d808eb0069327ae1f36503424e96ea0be6b513c611f4fc8d89c996c2087432aa
+    release:
+      ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.1
   - version: 3.14.7-jit-0.2.0
     platforms:
       aarch64-linux-gnu:
@@ -907,6 +989,22 @@ payloads:
         sha256: c8109751f1909107ff341e908e8b9d3974426d30c5a2881d054065e0e1f0522e
     release:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.0
+  - version: 3.14.7-jit-0.3.1
+    platforms:
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-jit-linux-gnu-arm64.tfs
+        sha256: e8c555e84c7ee73e133e8ec230efc185f905320f7c0971242cc53ec550ce5f75
+      aarch64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-jit-macos-arm64.tfs
+        sha256: 7183b4371053f562bef3fdb2138547f3d4127fbbdcdc66b05669475452ab1066
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-jit-linux-gnu-x86_64.tfs
+        sha256: e20ac22aff606fb675ddeba543e8f5a669c912a9fa6537c1c809baba03c5ff2c
+      x86_64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-jit-macos-x86_64.tfs
+        sha256: 1f53f3f10f889303d653e7feb4cd543c2b657b46d95b6120a085eeccc8f754e8
+    release:
+      ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.1
   - version: 3.14.7-0.2.0
     platforms:
       aarch64-linux-gnu:
@@ -1141,6 +1239,34 @@ payloads:
         sha256: 6bb70c077cb3af4184cc2666942dc4ec0f5bfa242723388ee4b63e3a6a7a1701
     release:
       ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.0
+  - version: 3.14.7-0.3.1
+    platforms:
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-linux-gnu-arm64.tfs
+        sha256: 9c9344948f1488562cbc1c9a98d4a42b7e60c5af6b3ac3631a95f219807c9a53
+      aarch64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-linux-musl-arm64.tfs
+        sha256: 33e393656c8ac77aae65a6e432fc158aceb22a4e55a9257b879c58fede6a83bb
+      aarch64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-macos-arm64.tfs
+        sha256: e2961078b272c2ab91bbe66061e04c5123edc0498335b5a5be7bc63715757573
+      aarch64-windows-ucrt:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-windows-ucrt-arm64.tfs
+        sha256: 87872623c94048d6f6e07b63962157e54ed3cfd365eb7680fb286e664f066333
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-linux-gnu-x86_64.tfs
+        sha256: 0af257bb44ff6e8a0f92e53a74c4930064e3145aefc9f5f34ebe9c706973cc25
+      x86_64-linux-musl:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-linux-musl-x86_64.tfs
+        sha256: faf63d410a81cb27816c3de6850ada41a889633caab7ee2cca26ad2e083db80b
+      x86_64-macos:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-macos-x86_64.tfs
+        sha256: 838a60da41cd5df75d5a183f0ea8333f776aa3831d3eec851b0dbdd752cf6da6
+      x86_64-windows-ucrt:
+        artifact: tebako-runtime-0.3.1-python-3.14.7-windows-ucrt64.tfs
+        sha256: 43f7a7bc1a950c33b4c3f817c77ba6f66779c3c9ec296ac373b949c435814395
+    release:
+      ref: tfs:github:tamatebako/tebako-runtime-python:v0.3.1
   engine: python
-  default: 3.14.7-0.3.0
+  default: 3.14.7-0.3.1
   implementation: cpython
