@@ -93,7 +93,14 @@ container_version: "v1"
 # ceiling to 64 MiB, so large-metadata payload images (the metanorma
 # class: ~8 MiB / 38k entries) mount inlined instead of demanding the
 # externalized sidecar. Contract unchanged (2).
-link_unit_release: "v2.8.47"
+# v2.8.47 → v2.8.49: the entry bridge (tebako#831 — the preload boot
+# composes [interpreter, args_default…, entry, args…]) and the
+# mount-root read fall-through ride along; v2.8.49 (tebako#839) is the
+# pin's own reason: the link unit's .drectve strip NUL-delimits, so
+# GCC's 4-byte padding no longer ships a pre-rename aws-lc export
+# directive into the windows leg's link (this repo's #53). Contract
+# unchanged (2).
+link_unit_release: "v2.8.49"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
