@@ -37,13 +37,14 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
   # A staged install prefix in the POSIX spelling `make install` produces
   # on every platform: the stdlib + lib-dynload under lib/pythonX.Y, a
   # kept site-packages member (build/site-packages.yml's whitelist) and a
-  # pruned one, the prunable top-level surface, and a prunable
-  # test-extension glob member.
+  # pruned one, pip's dist-info (the console scripts' metadata owner), the
+  # prunable top-level surface, and a prunable test-extension glob member.
   def stage_prefix(dir)
     libdir = File.join(dir, "lib", "python3.14")
     FileUtils.mkdir_p(File.join(libdir, "encodings"))
     FileUtils.mkdir_p(File.join(libdir, "lib-dynload"))
     FileUtils.mkdir_p(File.join(libdir, "site-packages", "pip"))
+    FileUtils.mkdir_p(File.join(libdir, "site-packages", "pip-99.0.dist-info"))
     FileUtils.mkdir_p(File.join(libdir, "site-packages", "yaml"))
     FileUtils.mkdir_p(File.join(libdir, "test"))
     FileUtils.mkdir_p(File.join(dir, "bin"))
@@ -53,6 +54,8 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
     File.write(File.join(libdir, "lib-dynload", "_socket.pyd"), "pyd\n")
     File.write(File.join(libdir, "lib-dynload", "_testcapi.pyd"), "pyd\n")
     File.write(File.join(libdir, "site-packages", "pip", "__init__.py"), "# pip\n")
+    File.write(File.join(libdir, "site-packages", "pip-99.0.dist-info", "entry_points.txt"),
+               "[console_scripts]\npip=pip._internal.cli.main:main\npip3=pip._internal.cli.main:main\n")
     File.write(File.join(libdir, "site-packages", "yaml", "__init__.py"), "# yaml\n")
     File.write(File.join(libdir, "test", "__init__.py"), "# test\n")
     File.write(File.join(dir, "bin", "python.exe"), "exe\n")
@@ -83,14 +86,20 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
       expect(File.exist?(File.join(dest, "lib", "test"))).to be false
       expect(File.file?(File.join(dest, "lib", "site-packages", "pip", "__init__.py"))).to be true
       expect(File.exist?(File.join(dest, "lib", "site-packages", "yaml"))).to be false
-      expect(File.exist?(File.join(dest, "bin"))).to be false
+      # bin/ holds the image's own console scripts (never the staged
+      # install's), and the manifest declares exactly them.
+      expect(Dir.children(File.join(dest, "bin")).sort).to eq(%w[pip pip3])
       # The tebako surface: the layout card keeps its contractual path
-      # and declares the runtime DLL; the manifest grants the tier.
+      # and declares the runtime DLL; the manifest grants the tier and
+      # declares the spawn surface.
       layout = YAML.load_file(File.join(dest, "lib", "tebako", "layout.yaml"))
       expect(layout["mount_root"]).to eq("A:/t")
       expect(layout["runtime_dll"]).to eq("libpython3.14.dll")
       manifest = YAML.load_file(File.join(dest, "__tpkg__", "manifest.yaml"))
       expect(manifest["provides"]["windows_boot"]).to eq("materialize")
+      expect(manifest["provides"]["entrypoints"]).to eq(
+        [{ "name" => "pip", "path" => "/bin/pip" }, { "name" => "pip3", "path" => "/bin/pip3" }]
+      )
     end
   end
 
@@ -113,6 +122,15 @@ RSpec.describe TebakoPythonBuilder::ImageBuilder do
       layout = YAML.load_file(File.join(dest, "lib", "tebako", "layout.yaml"))
       expect(layout["mount_root"]).to eq("/__tfs__")
       expect(layout["preload_shim"]).to eq("lib/tebako/libtfs_preload.so")
+      # The spawn surface: real scripts at /bin, declared in the manifest,
+      # with the POSIX mount-root shebang (never a host interpreter).
+      pip = File.read(File.join(dest, "bin", "pip"))
+      expect(pip.lines.first).to eq("#!/__tfs__/bin/python3\n")
+      expect(pip).to include("from pip._internal.cli.main import main")
+      manifest = YAML.load_file(File.join(dest, "__tpkg__", "manifest.yaml"))
+      expect(manifest["provides"]["entrypoints"]).to eq(
+        [{ "name" => "pip", "path" => "/bin/pip" }, { "name" => "pip3", "path" => "/bin/pip3" }]
+      )
     end
   end
 end
