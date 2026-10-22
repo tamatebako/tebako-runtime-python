@@ -113,7 +113,11 @@ module TebakoPythonBuilder
         raise
       end
 
-      def read_url(url, code:, redirects_left: MAX_REDIRECTS, headers: {}) # rubocop:disable Metrics/MethodLength
+      # `retry_extra_statuses` names 4xx codes THIS caller treats as
+      # transient (the GitHub release API answers 404 under load and for a
+      # token that cannot see the repository at that instant). The default
+      # stays empty: a missing asset must fail closed on the first attempt.
+      def read_url(url, code:, redirects_left: MAX_REDIRECTS, headers: {}, retry_extra_statuses: []) # rubocop:disable Metrics/MethodLength
         uri = URI.parse(url)
         return read_file_url(uri, code) if uri.scheme == "file"
         if redirects_left.zero?
@@ -132,10 +136,13 @@ module TebakoPythonBuilder
           when Net::HTTPSuccess then return response.body
           when Net::HTTPRedirection
             return read_url(URI.join(url, response["location"]).to_s, code: code,
-                            redirects_left: redirects_left - 1, headers: headers)
+                            redirects_left: redirects_left - 1, headers: headers,
+                            retry_extra_statuses: retry_extra_statuses)
           else
             status = response.code.to_i
-            next if retryable_status?(status) && retry_attempt(url, attempt + 1, "#{response.code} #{response.message}")
+            if retryable_status?(status, retry_extra_statuses) && retry_attempt(url, attempt + 1, "#{response.code} #{response.message}")
+              next
+            end
 
             raise TebakoPythonBuilder::Error.new("#{response.code} #{response.message} fetching #{url}", code)
           end
@@ -143,8 +150,8 @@ module TebakoPythonBuilder
       end
 
       # True when the HTTP status is one a retry can honestly fix.
-      def retryable_status?(status)
-        READ_URL_RETRYABLE_STATUSES.include?(status) || status >= 500
+      def retryable_status?(status, extra = [])
+        READ_URL_RETRYABLE_STATUSES.include?(status) || extra.include?(status) || status >= 500
       end
 
       # Names a failed attempt on stderr and sleeps out the backoff; true
@@ -192,7 +199,10 @@ module TebakoPythonBuilder
         token = ENV.fetch("GITHUB_TOKEN", nil) || ENV.fetch("GH_TOKEN", nil)
         headers["Authorization"] = "Bearer #{token}" if token && !token.empty?
 
-        data = JSON.parse(read_url(url, code: code, headers: headers))
+        # The release lookup rides the 404-retry budget: this endpoint
+        # answers 404 transiently (API propagation and shared-IP rate
+        # limits), and one such answer used to kill every matrix leg.
+        data = JSON.parse(read_url(url, code: code, headers: headers, retry_extra_statuses: [404]))
         (data["assets"] || []).each_with_object({}) do |asset, acc|
           digest = asset["digest"].to_s
           acc[asset["name"]] = digest.delete_prefix("sha256:") if digest.start_with?("sha256:")
