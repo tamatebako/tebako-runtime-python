@@ -85,6 +85,20 @@ RSpec.describe TebakoPythonBuilder::BuildHelpers do
       server.stop
     end
 
+    it "retries a 404 only when the caller names it transient" do
+      # The release-API lookup rides this arm: the endpoint answers 404
+      # under load, and one such answer used to kill a whole matrix leg.
+      server = StubHttpServer.new([["404 Not Found", "nope", {}], ["200 OK", "{\"assets\":[]}", {}]])
+      expect do
+        expect(
+          described_class.read_url(server.url, code: 1, retry_extra_statuses: [404])
+        ).to eq("{\"assets\":[]}")
+      end.to output(%r{attempt 1/3 failed fetching #{Regexp.escape(server.url)}: 404}).to_stderr
+      expect(server.requests.size).to eq(2)
+    ensure
+      server.stop
+    end
+
     it "exhausts the budget on persistent 503s, naming the url" do
       server = StubHttpServer.new(Array.new(3, ["503 Service Unavailable", "down", {}]))
       expect do
