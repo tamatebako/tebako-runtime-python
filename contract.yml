@@ -116,7 +116,16 @@ container_version: "v1"
 # where the boot tier can read a seeded entry (the windows materialize
 # tier cannot), and the payload edge seals before reading a runtime's
 # embedded manifest.
-link_unit_release: "v2.8.57"
+# v2.8.56 → v2.8.60: the line's link verbs (spec 11 §9 — the C ABI reads
+# an image's symlink entry: lstat reports it, readlink returns the
+# target, stat/open follow through the mount router, ELOOP past 32 hops)
+# and the press-side layout cache. This factory's staged tree carries no
+# links (measured on the published macos-arm64 artifact: zero), so
+# nothing in this artifact changes behaviour; the pin moves for the
+# line's currency and the shorter build loop. The preload mapping ships
+# INSIDE the runtime either way (the v2.8.54 lesson), so a payload tree
+# that one day carries links gets it only from this rebuild.
+link_unit_release: "v2.8.60"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
