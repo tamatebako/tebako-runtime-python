@@ -116,7 +116,7 @@ container_version: "v1"
 # where the boot tier can read a seeded entry (the windows materialize
 # tier cannot), and the payload edge seals before reading a runtime's
 # embedded manifest.
-link_unit_release: "v2.8.55"
+link_unit_release: "v2.8.57"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
