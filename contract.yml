@@ -125,7 +125,12 @@ container_version: "v1"
 # line's currency and the shorter build loop. The preload mapping ships
 # INSIDE the runtime either way (the v2.8.54 lesson), so a payload tree
 # that one day carries links gets it only from this rebuild.
-link_unit_release: "v2.8.60"
+# v2.8.61: the C ABI anchors a relative path at the entry (tebako#919) and
+# exports `tebako_fs_host_guard` (tebako#918) — the predicate an interpreter's
+# IO shims ask before handing an uncovered host path to the kernel. The
+# python factory does not consume the guard yet; the pin moves with the line
+# so every build leg links the current driver.
+link_unit_release: "v2.8.61"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
