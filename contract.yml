@@ -130,7 +130,13 @@ container_version: "v1"
 # IO shims ask before handing an uncovered host path to the kernel. The
 # python factory does not consume the guard yet; the pin moves with the line
 # so every build leg links the current driver.
-link_unit_release: "v2.8.61"
+# v2.8.65: the unit carries the raw-syscall interposition (tebako#935/#937):
+# libuv-style callers reach stat, fstat, close and the directory listing
+# through `syscall(2)`, where no symbol interposition sees them, so on Linux
+# a mounted file answered ENOENT to its own interpreter. The pin moves with
+# the line so every build leg links the driver that answers those calls from
+# the mounts.
+link_unit_release: "v2.8.65"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
