@@ -130,7 +130,14 @@ container_version: "v1"
 # IO shims ask before handing an uncovered host path to the kernel. The
 # python factory does not consume the guard yet; the pin moves with the line
 # so every build leg links the current driver.
-link_unit_release: "v2.8.61"
+# v2.8.62: the preload close path is fixed on arm64 (`close$NOCANCEL` was never
+# interposed, so libuv's internal file operations handed the kernel a flagged fd
+# and answered EBADF — node asserted on it; any interpreter reading through the
+# shim took the same kernel path). The entry-delivery declaration lands too
+# (spec 29 §3.1). Both live in the artifacts this factory links — the shim and
+# the driver — so the fix reaches users only through a rebuild against the line,
+# never through a user-side CLI upgrade.
+link_unit_release: "v2.8.62"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
