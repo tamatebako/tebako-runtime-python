@@ -202,7 +202,15 @@ module TebakoPythonBuilder
         # The release lookup rides the 404-retry budget: this endpoint
         # answers 404 transiently (API propagation and shared-IP rate
         # limits), and one such answer used to kill every matrix leg.
-        data = JSON.parse(read_url(url, code: code, headers: headers, retry_extra_statuses: [404]))
+        #
+        # 403 rides it too, for the same reason and a sharper one: GitHub
+        # answers a spent quota with 403 (`x-ratelimit-remaining: 0`), not
+        # 429 — and the token budget is per-token across every leg, so
+        # treating it as a dead upstream stopped a whole matrix on one
+        # exhausted minute (tebako-runtime-python#67).
+        data = JSON.parse(
+          read_url(url, code: code, headers: headers, retry_extra_statuses: [404, 403])
+        )
         (data["assets"] || []).each_with_object({}) do |asset, acc|
           digest = asset["digest"].to_s
           acc[asset["name"]] = digest.delete_prefix("sha256:") if digest.start_with?("sha256:")
