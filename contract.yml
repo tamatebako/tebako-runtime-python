@@ -130,13 +130,20 @@ container_version: "v1"
 # IO shims ask before handing an uncovered host path to the kernel. The
 # python factory does not consume the guard yet; the pin moves with the line
 # so every build leg links the current driver.
-# v2.8.65: the unit carries the raw-syscall interposition (tebako#935/#937):
-# libuv-style callers reach stat, fstat, close and the directory listing
-# through `syscall(2)`, where no symbol interposition sees them, so on Linux
-# a mounted file answered ENOENT to its own interpreter. The pin moves with
-# the line so every build leg links the driver that answers those calls from
-# the mounts.
-link_unit_release: "v2.8.65"
+# v2.8.65 → v2.8.66: the unit carries the raw-syscall interposition
+# (tebako#935/#937): libuv-style callers reach stat, fstat, close and the
+# directory listing through `syscall(2)`, where no symbol interposition
+# sees them, so on Linux a mounted file answered ENOENT to its own
+# interpreter. v2.8.65 forwarded the routed numbers through
+# dlsym(RTLD_NEXT, "syscall"), which allocates under the loader lock —
+# a first intercepted call in a process's earliest startup deadlocked it
+# silently (this factory's linux-gnu legs, hard-killed at boot_smoke's
+# 60s deadline). v2.8.66 is the pin: the forward is the instruction
+# itself (svc on aarch64, syscall on x86_64) with the kernel's -errno
+# turned into libc's -1 + errno — no libc symbol, no allocation, no
+# loader lock. Every build leg links the driver that answers those
+# calls from the mounts without wedging glibc.
+link_unit_release: "v2.8.66"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
