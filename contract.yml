@@ -143,7 +143,7 @@ container_version: "v1"
 # turned into libc's -1 + errno — no libc symbol, no allocation, no
 # loader lock. Every build leg links the driver that answers those
 # calls from the mounts without wedging glibc.
-link_unit_release: "v2.8.66"
+link_unit_release: "v2.8.72"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
