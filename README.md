@@ -365,7 +365,7 @@ linux-gnu|linux-musl|macos`, `arch_filter=all|x86_64|arm64`).
 | linux-musl | x86_64 | ubuntu-22.04 | tpkg-builder-x86_64-linux-musl | linux-musl-x86_64 |
 | linux-musl | arm64 | ubuntu-22.04-arm | tpkg-builder-aarch64-linux-musl | linux-musl-arm64 |
 | macos | x86_64 | macos-15-intel | — (runner-native) | macos-x86_64 |
-| macos | arm64 | macos-14 | — (runner-native) | macos-arm64 |
+| macos | arm64 | macos-15 | — (runner-native) | macos-arm64 |
 | windows (ucrt64) | x86_64 | windows-2022 | — (runner-native) | x86_64-windows-gnu |
 | windows (clangarm64) | arm64 | windows-11-arm | — (runner-native) | aarch64-windows-gnu (not yet published — see below) |
 
