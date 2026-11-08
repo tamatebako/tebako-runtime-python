@@ -146,6 +146,7 @@ if file_out="$(file "$EXE" 2>/dev/null)" && printf '%s' "$file_out" | grep -q EL
     case "$lib" in
       libc.musl-*.so.1 | ld-musl-*.so.1 | \
       libc.so.6 | libm.so.6 | libdl.so.2 | librt.so.2 | libpthread.so.0 | \
+      libutil.so.1 | \
       ld-linux-*.so.2 | ld-linux-*.so.1 | libgcc_s.so.1) : ;;
       *) fail "$EXE NEEDs $lib — a runtime .so dependency a bare system cannot satisfy (the audience rule; tebako-runtime-python#76)" ;;
     esac
