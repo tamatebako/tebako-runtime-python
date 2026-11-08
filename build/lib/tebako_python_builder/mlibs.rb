@@ -132,32 +132,41 @@ module TebakoPythonBuilder
       )
     end
 
-    # The gettext static closure (msys): libintl.a plus the archives its
-    # own references need (libiconv.a, libcharset.a). CPython's builtin
-    # _locale (Modules/Setup.bootstrap.in — why the import lives in the
-    # CORE) references gettext, and configure's
-    # AC_CHECK_LIB(intl, textdomain) prepends `-lintl` to LIBS: the
-    # IMPORT-library spelling binds libintl-8.dll into libpython3.14.dll,
-    # and the OS loader resolves that at PROCESS START — before any
-    # driver code, hence before the library_aliases PATH lead. MSYS2's
-    # gettext-runtime package ships the static archive too, so
-    # PythonBuild's LIBS rewrite binds gettext INTO the core and the
-    # pair's import table carries only Windows system DLLs. Order
-    # matters (single-pass GNU ld): libintl before its iconv/charset
-    # deps.
+    # The gettext static closure. CPython's builtin _locale
+    # (Modules/Setup.bootstrap.in — why the import lives in the CORE)
+    # references gettext, and configure's AC_CHECK_LIB(intl, textdomain)
+    # prepends `-lintl` to LIBS.
+    #
+    # msys: the import-library spelling binds libintl-8.dll into
+    # libpython3.14.dll, and the OS loader resolves that at PROCESS START
+    # — before any driver code, hence before the library_aliases PATH
+    # lead can run. MSYS2's gettext-runtime package ships the static
+    # archive too, so the LIBS rewrite binds gettext INTO the core and
+    # the pair's import table carries only Windows system DLLs. The
+    # closure is libintl.a plus the archives its own references need
+    # (libiconv.a, libcharset.a). Order matters (single-pass GNU ld):
+    # libintl before its iconv/charset deps.
+    #
+    # musl: the same configure check bound libintl.so.8 DYNAMICALLY into
+    # the runtime exe (tebako-runtime-python#76 — the v0.3.3 musl legs
+    # shipped an exe that cannot boot on a bare alpine: no libintl.so.8
+    # off the gettext packages). The audience rule (a runtime needs no
+    # system libraries) admits no runtime .so dependency, so musl binds
+    # the archive too. musl libc carries iconv in libc — the closure is
+    # libintl.a alone.
     def intl_static_libs
-      return [] unless @platform.msys?
+      return %w[intl iconv charset].map { |name| static_lib(name) } if @platform.msys?
+      return [static_lib("intl")] if @platform.linux_musl?
 
-      %w[intl iconv charset].map { |name| static_lib(name) }
+      []
     end
 
     # Replace the import-library token in a configure-emitted LIBS value
     # with the static archives (intl_static_libs owns the set and order).
-    # Whole-token match only; a POSIX value (which never carries -lintl
-    # in this factory's link set) rides through untouched, and so does a
-    # value configure produced without gettext.
+    # Whole-token match only; a value configure produced without gettext
+    # rides through untouched.
     def bind_gettext_statically(value)
-      return value unless @platform.msys?
+      return value unless @platform.msys? || @platform.linux_musl?
 
       libs = intl_static_libs.join(" ")
       value.gsub(/(?<!\S)-lintl(?!\S)/) { libs }

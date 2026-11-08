@@ -528,7 +528,7 @@ module TebakoPythonBuilder
       targets.each do |path|
         content = File.read(path)
         substitutions.each { |(pattern, replacement)| content = content.gsub(pattern, replacement) }
-        content = bind_gettext_statically(content) if @platform.msys?
+        content = bind_gettext_statically(content) if @platform.msys? || @platform.linux_musl?
         content += "\n#{MARKER}\nTEBAKO_LIBS=\t#{mlibs.tebako_libs}\n" \
                    "Programs/tebako_python.o: Programs/tebako_python.c $(PYTHON_HEADERS)\n" \
                    "\t$(CC) -c $(PY_CORE_CFLAGS) -o $@ $<\n"
