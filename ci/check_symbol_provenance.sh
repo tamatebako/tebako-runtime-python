@@ -117,6 +117,42 @@ else
   echo "disassembly evidence:"; printf '%s\n' "$dis"
 fi
 
+# --- the exe's runtime library closure is system-only (ELF legs) -------
+# The audience rule in executable form: a runtime must boot on a bare
+# target system, so its NEEDED set carries the platform's own libraries
+# and nothing else. tebako-runtime-python#76 shipped a musl exe NEEDing
+# libintl.so.8 (configure's -lintl bound the shared object where no static
+# archive was provisioned) — a bare alpine cannot boot it. readelf's
+# NEEDED rows are the evidence; an unreadable/missing table is a failure,
+# never a silent pass. The allowlist: musl's libc, glibc's core set, and
+# the loaders themselves.
+if file_out="$(file "$EXE" 2>/dev/null)" && printf '%s' "$file_out" | grep -q ELF; then
+  # The same cascade as the disassembly above: readelf, then the llvm
+  # spelling; an ELF leg with neither is a harness gap, named as such.
+  needed=""
+  if command -v readelf >/dev/null 2>&1; then
+    needed="$(readelf -d "$EXE" 2>/dev/null | awk '/NEEDED/ { gsub(/[][]/, ""); print $NF }' || true)"
+  elif command -v llvm-readelf >/dev/null 2>&1; then
+    needed="$(llvm-readelf -d "$EXE" 2>/dev/null | awk '/NEEDED/ { gsub(/[][]/, ""); print $NF }' || true)"
+  else
+    fail "an ELF exe and no readelf/llvm-readelf to audit its NEEDED rows — the harness must carry binutils"
+  fi
+  if [ -z "$needed" ] && { command -v readelf >/dev/null 2>&1 || command -v llvm-readelf >/dev/null 2>&1; }; then
+    fail "the dynamic section of $EXE yielded no NEEDED rows (a static exe? the probe cannot run)"
+  fi
+  needed_failures_before=$failures
+  while IFS= read -r lib; do
+    [ -z "$lib" ] && continue
+    case "$lib" in
+      libc.musl-*.so.1 | ld-musl-*.so.1 | \
+      libc.so.6 | libm.so.6 | libdl.so.2 | librt.so.2 | libpthread.so.0 | \
+      ld-linux-*.so.2 | ld-linux-*.so.1 | libgcc_s.so.1) : ;;
+      *) fail "$EXE NEEDs $lib — a runtime .so dependency a bare system cannot satisfy (the audience rule; tebako-runtime-python#76)" ;;
+    esac
+  done <<< "$needed"
+  [ -n "$needed" ] && [ "$failures" -eq "$needed_failures_before" ] && note "the exe's NEEDED set is system-only: $(printf '%s\n' "$needed" | tr '\n' ' ')"
+fi
+
 if [ "$failures" -gt 0 ]; then
   echo "::error::provenance: $failures check(s) failed"
   exit 1

@@ -85,4 +85,26 @@ RSpec.describe TebakoPythonBuilder::Mlibs do
       expect(libs).not_to include("-static-libstdc++")
     end
   end
+
+  context "on linux/musl (the alpine tpkg-builder leg)" do
+    subject(:mlibs) { msys_mlibs("x86_64-linux-musl", "x86_64") }
+
+    it "binds gettext statically with libintl.a alone (musl libc carries iconv) — #76" do
+      expect(mlibs.intl_static_libs).to eq(%w[/deps/lib/libintl.a])
+      rewritten = mlibs.bind_gettext_statically("-lintl -static-libgcc")
+      expect(rewritten).to eq("/deps/lib/libintl.a -static-libgcc")
+      # A value without gettext (or a near-miss token) rides untouched.
+      expect(mlibs.bind_gettext_statically("-static-libgcc")).to eq("-static-libgcc")
+      expect(mlibs.bind_gettext_statically("-lintlx")).to eq("-lintlx")
+    end
+  end
+
+  context "on linux/gnu (glibc carries the gettext symbols)" do
+    subject(:mlibs) { msys_mlibs("x86_64-linux-gnu", "x86_64") }
+
+    it "binds nothing (no -lintl ever reaches the gnu link set)" do
+      expect(mlibs.intl_static_libs).to eq([])
+      expect(mlibs.bind_gettext_statically("-lintl -lm")).to eq("-lintl -lm")
+    end
+  end
 end
