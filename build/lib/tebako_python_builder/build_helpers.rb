@@ -61,6 +61,7 @@ module TebakoPythonBuilder
         puts "   ... @ #{args.join(" ")}"
         spawn_opts = chdir ? { chdir: chdir } : {}
         out, st = Open3.capture2e(env, *args, **spawn_opts)
+        log_capture(args, out, st)
         if st.signaled? || !st.exitstatus.zero?
           raise TebakoPythonBuilder::Error, "Failed to run #{args.join(" ")} (#{st}):\n #{out}"
         end
@@ -76,6 +77,23 @@ module TebakoPythonBuilder
         else
           run_with_capture(args, env: env, chdir: chdir)
         end
+      end
+
+      # Every captured command's full output lands in the build log: the
+      # GH step log carries the `... @` lines alone, so a GREEN leg's
+      # configure/make answers exist only here — python#79 needed the
+      # published macos-x86_64 build's configure probes and they were
+      # nowhere. TEBAKO_BUILD_LOG overrides the default .build/build.log;
+      # the log is evidence, never the build's failure mode.
+      def log_capture(args, out, status)
+        path = ENV.fetch("TEBAKO_BUILD_LOG", File.join(".build", "build.log"))
+        FileUtils.mkdir_p(File.dirname(path))
+        File.open(path, "a") do |f|
+          f.puts "\n=== @ #{args.join(' ')} (exit #{status.exitstatus || 'signaled'}) ==="
+          f.write(out)
+        end
+      rescue SystemCallError, Errno::Error
+        nil
       end
 
       # Sets up temporary environment variables and yields to the
