@@ -60,6 +60,7 @@ module TebakoPythonBuilder
       @src_mirror = src_mirror
       @link_unit_release = link_unit_release || contract.link_unit_release
       @link_unit_pid = link_unit_pid
+      @macos_deployment_target = contract.macos_deployment_target
       # The leg's DECLARED arch beats the tooling process's self-report:
       # under emulation (the msys x64 ruby on a windows-11-arm runner)
       # host_cpu lies, and every arch-keyed decision (the msys2
@@ -82,7 +83,8 @@ module TebakoPythonBuilder
       build = TebakoPythonBuilder::PythonBuild.new(platform: @platform, python_version: @python_version,
                                                    prefix: @prefix, tarball: tarball, src_sha256: sha256,
                                                    link_unit: link_unit, link_unit_dir: link_unit_dir,
-                                                   repo_root: @repo_root, jobs: @jobs)
+                                                   repo_root: @repo_root, jobs: @jobs,
+                                                   macos_deployment_target: @macos_deployment_target)
                                               .run
       finalize(build.exe_path)
       assemble_and_pack_image(build, sha256, link_unit, link_unit_dir, tfs)

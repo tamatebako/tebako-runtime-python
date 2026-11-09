@@ -176,6 +176,19 @@ elif printf '%s' "$file_out" | grep -q 'Mach-O'; then
     esac
   done <<< "$needed"
   [ "$failures" -eq "$needed_failures_before" ] && note "the exe's dylib rows are system-only: $(printf '%s\n' "$needed" | tr '\n' ' ')"
+
+  # The support floor is a pinned product decision (contract.yml's
+  # macos_deployment_target), never the runner image's accident — v0.3.3
+  # floated with the build host's OS (arm64=14.8, x86_64=15.7) and the
+  # Intel exe refused to load on macOS 14 (tebako-runtime-python#81).
+  # The recorded LC_BUILD_VERSION/LC_VERSION_MIN_MACOSX minos must BE the
+  # pin. The contract sits beside this script's ci/ directory.
+  floor=$(sed -n 's/^macos_deployment_target: *"\([^"]*\)".*/\1/p' "$(cd "$(dirname "$0")/.." && pwd)/contract.yml")
+  [ -z "$floor" ] && fail "contract.yml carries no macos_deployment_target pin — the floor cannot float (tebako-runtime-python#81)"
+  minos="$(otool -l "$EXE" 2>/dev/null | awk '/cmd LC_VERSION_MIN_MACOSX|cmd LC_BUILD_VERSION/ {found=1} found && /^    minos / {print $2; exit}' || true)"
+  [ -z "$minos" ] && fail "otool -l on $EXE yielded no minos record — a Mach-O without a support floor cannot be gated"
+  [ "$minos" = "$floor" ] || fail "$EXE records minos $minos but contract.yml pins $floor — the macOS floor floated with the runner image (tebako-runtime-python#81)"
+  note "the exe's recorded support floor is the pinned $floor"
 fi
 
 if [ "$failures" -gt 0 ]; then
