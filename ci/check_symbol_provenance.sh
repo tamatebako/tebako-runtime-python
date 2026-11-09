@@ -152,6 +152,30 @@ if file_out="$(file "$EXE" 2>/dev/null)" && printf '%s' "$file_out" | grep -q EL
     esac
   done <<< "$needed"
   [ -n "$needed" ] && [ "$failures" -eq "$needed_failures_before" ] && note "the exe's NEEDED set is system-only: $(printf '%s\n' "$needed" | tr '\n' ' ')"
+elif printf '%s' "$file_out" | grep -q 'Mach-O'; then
+  # The Mach-O spelling of the same gate: the v0.3.3 macos-x86_64 exe
+  # loaded /usr/local/opt/gettext/lib/libintl.8.dylib (Homebrew's keg —
+  # absent on a bare Mac, so the exe did not boot; otool on the published
+  # asset is the evidence). otool -L's dependency rows must be macOS's
+  # own dylibs and nothing else; the first output line is the exe's own
+  # header and is skipped. The arm64 leg escaped by configure NOT finding
+  # /opt/homebrew's keg — an accident of the search path, not a shape to
+  # rely on: this arm pins the closure regardless of what configure finds.
+  if command -v otool >/dev/null 2>&1; then
+    needed="$(otool -L "$EXE" 2>/dev/null | awk 'NR > 1 { print $1 }' || true)"
+  else
+    fail "a Mach-O exe and no otool to audit its dylib rows — the harness must carry cctools"
+  fi
+  [ -z "$needed" ] && fail "otool -L on $EXE yielded no dylib rows (the probe cannot run)"
+  needed_failures_before=$failures
+  while IFS= read -r lib; do
+    [ -z "$lib" ] && continue
+    case "$lib" in
+      /usr/lib/* | /System/Library/*) : ;;
+      *) fail "$EXE loads $lib — a runtime dylib a bare macOS cannot satisfy (the audience rule; the v0.3.3 macos-x86_64 libintl.8.dylib defect)" ;;
+    esac
+  done <<< "$needed"
+  [ "$failures" -eq "$needed_failures_before" ] && note "the exe's dylib rows are system-only: $(printf '%s\n' "$needed" | tr '\n' ' ')"
 fi
 
 if [ "$failures" -gt 0 ]; then

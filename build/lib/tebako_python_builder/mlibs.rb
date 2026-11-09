@@ -110,15 +110,22 @@ module TebakoPythonBuilder
     end
 
     # The static archive path for one of the extension deps (ssl/crypto/z,
-    # ffi on msys). macOS resolves from the Homebrew keg (the toolchain
-    # default search never sees a keg-only formula); every other leg asks
-    # the C toolchain's own search path (`cc -print-file-name`), so the
-    # archive bound is the one the platform's compiler would have chosen.
-    # An unresolved archive is a named build error, never a silent dynamic
-    # bind.
+    # ffi on msys, intl on the gettext legs). macOS resolves from the
+    # Homebrew keg (the toolchain default search never sees a keg-only
+    # formula); every other leg asks the C toolchain's own search path
+    # (`cc -print-file-name`), so the archive bound is the one the
+    # platform's compiler would have chosen. An unresolved archive is a
+    # named build error, never a silent dynamic bind — and an unmapped
+    # name is a named error too, never a default-to-openssl guess.
+    MACOS_KEG_PACKAGES = { "z" => "zlib", "ssl" => "openssl@3", "crypto" => "openssl@3", "intl" => "gettext" }.freeze
+
     def static_lib(name)
       if @platform.macos?
-        package = name == "z" ? "zlib" : "openssl@3"
+        package = MACOS_KEG_PACKAGES.fetch(name) do
+          raise TebakoPythonBuilder::Error.new(
+            "no Homebrew keg mapping for lib#{name} — extend MACOS_KEG_PACKAGES (never a default guess)", 112
+          )
+        end
         path = File.join(@platform.brew_prefix(package), "lib", "lib#{name}.a")
       else
         out = TebakoPythonBuilder::BuildHelpers.run_with_capture(["cc", "-print-file-name=lib#{name}.a"]).strip
@@ -154,9 +161,18 @@ module TebakoPythonBuilder
     # system libraries) admits no runtime .so dependency, so musl binds
     # the archive too. musl libc carries iconv in libc — the closure is
     # libintl.a alone.
+    #
+    # macOS: identical failure shape on the Intel leg
+    # (tebako-runtime-python#80 — the v0.3.3 macos-x86_64 exe NEEDs
+    # /usr/local/opt/gettext/lib/libintl.8.dylib, Homebrew's keg; a bare
+    # Mac has no such path, so the exe does not boot — otool on the
+    # published asset is the evidence). The arm64 leg escaped only because
+    # /opt/homebrew sits off the default search path and configure never
+    # found gettext there. macOS libSystem carries iconv — the closure is
+    # libintl.a alone, from the gettext keg.
     def intl_static_libs
       return %w[intl iconv charset].map { |name| static_lib(name) } if @platform.msys?
-      return [static_lib("intl")] if @platform.linux_musl?
+      return [static_lib("intl")] if @platform.linux_musl? || @platform.macos?
 
       []
     end
@@ -164,12 +180,14 @@ module TebakoPythonBuilder
     # Replace the import-library token in a configure-emitted LIBS value
     # with the static archives (intl_static_libs owns the set and order).
     # Whole-token match only; a value configure produced without gettext
-    # rides through untouched.
+    # rides through untouched — and the closure resolves LAZILY inside the
+    # substitution, so a leg where configure never found gettext (the
+    # macOS arm64 shape: /opt/homebrew is off the default search path)
+    # never probes an archive it does not need.
     def bind_gettext_statically(value)
-      return value unless @platform.msys? || @platform.linux_musl?
+      return value unless @platform.msys? || @platform.linux_musl? || @platform.macos?
 
-      libs = intl_static_libs.join(" ")
-      value.gsub(/(?<!\S)-lintl(?!\S)/) { libs }
+      value.gsub(/(?<!\S)-lintl(?!\S)/) { intl_static_libs.join(" ") }
     end
 
     private
