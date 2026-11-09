@@ -99,13 +99,13 @@ RSpec.describe TebakoPythonBuilder::Mlibs do
     end
   end
 
-  context "on macOS (libSystem carries iconv — the v0.3.3 Intel exe NEEDed Homebrew's libintl.8.dylib)" do
+  context "on macOS (the v0.3.3 Intel exe NEEDed Homebrew's libintl.8.dylib)" do
     subject(:mlibs) { msys_mlibs("x86_64-apple-darwin24", "x86_64") }
 
-    it "binds gettext statically with libintl.a alone (the /usr/local/opt/gettext boot defect)" do
-      expect(mlibs.intl_static_libs).to eq(%w[/deps/lib/libintl.a])
+    it "binds gettext statically: libintl.a + -liconv (iconv is macOS's own dylib, not libSystem-reexported)" do
+      expect(mlibs.intl_static_libs).to eq(%w[/deps/lib/libintl.a -liconv])
       rewritten = mlibs.bind_gettext_statically("-lintl -ldl  -framework CoreFoundation")
-      expect(rewritten).to eq("/deps/lib/libintl.a -ldl  -framework CoreFoundation")
+      expect(rewritten).to eq("/deps/lib/libintl.a -liconv -ldl  -framework CoreFoundation")
       # A value without gettext (or a near-miss token) rides untouched.
       expect(mlibs.bind_gettext_statically("-ldl")).to eq("-ldl")
       expect(mlibs.bind_gettext_statically("-lintlx")).to eq("-lintlx")

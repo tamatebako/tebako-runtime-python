@@ -168,11 +168,16 @@ module TebakoPythonBuilder
     # Mac has no such path, so the exe does not boot — otool on the
     # published asset is the evidence). The arm64 leg escaped only because
     # /opt/homebrew sits off the default search path and configure never
-    # found gettext there. macOS libSystem carries iconv — the closure is
-    # libintl.a alone, from the gettext keg.
+    # found gettext there. The closure is the gettext keg's libintl.a plus
+    # -liconv: macOS keeps iconv in its own system dylib
+    # (/usr/lib/libiconv.2.dylib — present on every bare Mac, inside the
+    # provenance gate's /usr/lib allowlist), NOT re-exported by libSystem,
+    # so the archive alone leaves _iconv/_iconv_open undefined at link
+    # time.
     def intl_static_libs
       return %w[intl iconv charset].map { |name| static_lib(name) } if @platform.msys?
-      return [static_lib("intl")] if @platform.linux_musl? || @platform.macos?
+      return [static_lib("intl"), "-liconv"] if @platform.macos?
+      return [static_lib("intl")] if @platform.linux_musl?
 
       []
     end
