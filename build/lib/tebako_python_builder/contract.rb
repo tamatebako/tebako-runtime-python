@@ -60,6 +60,13 @@ module TebakoPythonBuilder
       nonempty_pin("link_unit_release")
     end
 
+    # The macOS support floor (the exe's LC_BUILD_VERSION minos) — a
+    # product decision, never the runner image's accident
+    # (tebako-runtime-python#81).
+    def macos_deployment_target
+      nonempty_pin("macos_deployment_target")
+    end
+
     def catalog
       sets = @data.fetch("python") do
         raise TebakoPythonBuilder::Error.new("#{@path} carries no python: catalog", 64)

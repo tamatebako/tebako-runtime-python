@@ -5,7 +5,7 @@
 $schema: "https://json-schema.org/draft/2020-12/schema"
 title: tebako-runtime-python bootstrap <-> runtime contract
 type: object
-required: [contract_version, python]
+required: [contract_version, macos_deployment_target, python]
 additionalProperties: false
 properties:
   contract_version:
@@ -20,6 +20,13 @@ properties:
     # the first real build.
     pattern: '^v\d+(\.\d{4}\.\d{2}\.\d{2})?$'
     description: the tpkg-builder container tag line the POSIX legs run inside
+  macos_deployment_target:
+    type: string
+    # The macOS support floor stamped into the exe's LC_BUILD_VERSION
+    # minos — a product decision, never the runner image's accident
+    # (tebako-runtime-python#81).
+    pattern: '^\d+\.\d+$'
+    description: the macOS support floor for the macOS legs (MACOSX_DEPLOYMENT_TARGET), uniform across arches and asserted at the provenance gate
   link_unit_release:
     type: string
     pattern: '^$|^v\d+\.\d+\.\d+$'

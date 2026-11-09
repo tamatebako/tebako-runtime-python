@@ -82,7 +82,7 @@ module TebakoPythonBuilder
     MARKER = "# --- tebako: the fs TU + driver link (factory substitution) ---"
 
     def initialize(platform:, python_version:, prefix:, tarball:, src_sha256:, # rubocop:disable Metrics/ParameterLists,Metrics/MethodLength
-                   link_unit:, link_unit_dir:, repo_root:, jobs: nil)
+                   link_unit:, link_unit_dir:, repo_root:, jobs: nil, macos_deployment_target: nil)
       @platform = platform
       @python_version = python_version
       @python = TebakoPythonBuilder::PythonVersion.new(python_version)
@@ -93,22 +93,47 @@ module TebakoPythonBuilder
       @link_unit_dir = link_unit_dir
       @repo_root = repo_root
       @jobs = jobs
+      @macos_deployment_target = macos_deployment_target
       @jit_env = {}
     end
 
     attr_reader :src_dir, :stage_dir
 
     def run
-      extract
-      gate_msys_socket_selectability if @platform.msys?
-      gate_jit_toolchain if @python.jit?
-      write_setup_local
-      configure
-      substitute_makefiles
-      write_fs_tu
-      make
-      install
+      BuildHelpers.with_env(floor_env) do
+        extract
+        gate_msys_socket_selectability if @platform.msys?
+        gate_jit_toolchain if @python.jit?
+        write_setup_local
+        configure
+        substitute_makefiles
+        write_fs_tu
+        make
+        install
+      end
       self
+    end
+
+    # The macOS support floor rides the WHOLE build as
+    # MACOSX_DEPLOYMENT_TARGET — configure's probes compile+link, and the
+    # exe's final link (inside make) is what clang stamps as
+    # LC_BUILD_VERSION minos. Unpinned, the stamp floats with the build
+    # host's OS (v0.3.3: arm64=14.8, x86_64=15.7 — the Intel runtime
+    # refused to load on macOS 14; tebako-runtime-python#81). The pin is
+    # contract.yml's macos_deployment_target, a product decision, and the
+    # provenance gate asserts the recorded minos equals it. Off-macOS the
+    # env is empty and with_env changes nothing.
+    def floor_env
+      return {} unless @platform.macos?
+
+      floor = @macos_deployment_target.to_s
+      if floor.empty?
+        raise TebakoPythonBuilder::Error.new(
+          "no macos_deployment_target pin (contract.yml) — the macOS support floor is a product decision, " \
+          "never the runner image's accident (tebako-runtime-python#81)", 64
+        )
+      end
+      { "MACOSX_DEPLOYMENT_TARGET" => floor }
     end
 
     # The built interpreter exe in the build tree (the driver-linked one).
