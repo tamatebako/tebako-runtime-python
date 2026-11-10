@@ -399,6 +399,10 @@ jobs:
       - name: Nudge the official registry's aggregate
         env:
           GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+          # The render/publish steps declare this; the nudge died on it
+          # (v0.3.4's registry_only run 42757685803: "TEBAKO_VERSION:
+          # unbound variable" under set -u). Same expression, same source.
+          TEBAKO_VERSION: ${{ inputs.registry_only && inputs.registry_version || (needs.windows.outputs.tebako_version || needs.linux-gnu.outputs.tebako_version || needs.linux-musl.outputs.tebako_version || needs.macos.outputs.tebako_version) }}
         run: |
           set -uo pipefail
           branch="publish/v${TEBAKO_VERSION}-registry"
