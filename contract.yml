@@ -158,7 +158,7 @@ macos_deployment_target: "14.0"
 # turned into libc's -1 + errno — no libc symbol, no allocation, no
 # loader lock. Every build leg links the driver that answers those
 # calls from the mounts without wedging glibc.
-link_unit_release: "v2.8.76"
+link_unit_release: "v2.8.78"
 
 # The tamatebako/python SOURCE release this factory consumes
 # (tfs-python-<version>-src[-<scenario>].tar.gz + SHA256SUMS,
