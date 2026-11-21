@@ -468,12 +468,15 @@ platform ships).
   `EXPECTED_ENV_MATRIX`/`EXPECTED_PYTHON_MATRIX` rows.
 - `tools/build_runtime` — the build entry point (fetch → verify → build
   → link → pack → package → sidecars).
-- `tools/boot_smoke` — the post-build acceptance gate (12 scenarios):
+- `tools/boot_smoke` — the post-build acceptance gate (14 scenarios):
   stdlib + ssl + zlib imports off the mounted image, the dlopen
   extension path, the `TEBAKO_MOUNT_ROOT` 65/78 parity cases, the
   bare-exe dev-mode contract, the `jit` flavor probe (a jit line
   reports the JIT capability under `PYTHON_JIT=1`, a plain line reports
-  its absence), and on windows the `alias-closure` self-containment
+  its absence), the `compute-floor` tripwire (a slow BUILD ships green
+  under a boot-only gate — tebako-runtime-python#79; the leg times a
+  fixed pure-compute loop inside the interpreter and fails past a
+  generous ceiling), and on windows the `alias-closure` self-containment
   proof (static-import-only pair, the image's declared PE closure, and
   every boot under a PATH scrubbed to the Windows system directories).
   Needs `TEBAKO_TFS` (the tfs CLI, for the mount probe) and
