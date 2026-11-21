@@ -476,7 +476,11 @@ platform ships).
   its absence), the `compute-floor` tripwire (a slow BUILD ships green
   under a boot-only gate — tebako-runtime-python#79; the leg times a
   fixed pure-compute loop inside the interpreter and fails past a
-  generous ceiling), and on windows the `alias-closure` self-containment
+  generous ceiling — fail-closed everywhere except the macos-x86_64
+  legs, which ride warn-only via `COMPUTE_FLOOR_MODE=warn` while the
+  live defect's root cause ships in the product repo, tebako#1095, and
+  revert to fail-closed once it closes), and on windows the
+  `alias-closure` self-containment
   proof (static-import-only pair, the image's declared PE closure, and
   every boot under a PATH scrubbed to the Windows system directories).
   Needs `TEBAKO_TFS` (the tfs CLI, for the mount probe) and
