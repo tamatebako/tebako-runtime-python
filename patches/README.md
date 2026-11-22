@@ -19,6 +19,10 @@ not blocked on a source-factory release cycle. Every entry must:
   the source factory's series convention). POSIX builds never carry a
   factory patch — their autoconf path is correct by construction, and
   the selection (`FactoryPatches#paths`) is empty off msys;
+- stay LF in every checkout (the repo's `.gitattributes` pins
+  `*.patch text eol=lf` — a CRLF-rewritten context line matches nothing
+  in the LF source tree; the apply step additionally normalizes a
+  re-encoded copy loudly rather than red a leg on the encoding);
 - cite its provenance in the header (the upstream patch file and the
   commit it was taken at — the windows port tracks MSYS2's
   `mingw-w64-python` series, so a header names the MSYS2 number and the
