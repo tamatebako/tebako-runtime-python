@@ -1,0 +1,40 @@
+# multiprocessing_sem_unlink_msys.patch
+#
+# Target:  Modules/_multiprocessing/multiprocessing.c (windows-msys scenario)
+# Source:  MSYS2 MINGW-packages mingw-w64-python 0038
+#          "multiprocessing: expose sem_unlink to fix multiprocessing.Queue"
+#          (the hunk is verbatim the upstream patch file at MINGW-packages
+#          commit ff0f09eac0cfaf14667219ffac2f10a05b4447db; carried here as a
+#          FACTORY patch because tamatebako/python's windows-msys series does
+#          not ship 0038 yet — tebako-runtime-python#105. REMOVAL: drop this
+#          file once the pinned source_release carries the fix; the apply
+#          step detects the carried state and skips loudly until then)
+#
+# Wall item (runtime import wall — tebako-packages/pydata conformance arm 3,
+# run 45007247506, x86_64-windows-ucrt leg): cpython 3.14's
+# Lib/multiprocessing/synchronize.py imports `sem_unlink` from
+# _multiprocessing UNCONDITIONALLY (the try only guards platforms with no
+# functioning sem_open). Upstream's win32 build always exports it: on
+# MS_WINDOWS multiprocessing.h defines HAVE_MP_SEMAPHORE outright and
+# semaphore.c spells SEM_UNLINK(name) a no-op 0 (win32 named semaphores
+# need no unlink). The mingw/autoconf path instead runs configure, the
+# sem_open probe fails, POSIX_SEMAPHORES_NOT_ENABLED is defined, the
+# methoddef's guard drops the export, and Lock/Queue/Pool all die at the
+# synchronize import:
+#   ImportError: cannot import name 'sem_unlink' from '_multiprocessing'
+# The fix widens only the methoddef guard, exactly as upstream's own win32
+# shape implies: expose the method when MS_WINDOWS, keep the POSIX probe
+# guard everywhere else.
+diff --git a/Modules/_multiprocessing/multiprocessing.c b/Modules/_multiprocessing/multiprocessing.c
+index cee8cf7..8e09cea 100644
+--- a/Modules/_multiprocessing/multiprocessing.c
++++ b/Modules/_multiprocessing/multiprocessing.c
+@@ -181,7 +181,7 @@ static PyMethodDef module_methods[] = {
+     _MULTIPROCESSING_RECV_METHODDEF
+     _MULTIPROCESSING_SEND_METHODDEF
+ #endif
+-#if !defined(POSIX_SEMAPHORES_NOT_ENABLED)
++#if defined(MS_WINDOWS) || !defined(POSIX_SEMAPHORES_NOT_ENABLED)
+     _MULTIPROCESSING_SEM_UNLINK_METHODDEF
+ #endif
+     {NULL}

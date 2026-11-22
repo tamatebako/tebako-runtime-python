@@ -42,7 +42,10 @@
 #                        both off contract.yml's link_unit_release pin
 #   3. configure + make  the relocatable CPython (PythonBuild: prefix =
 #                        the mount root; Modules/Setup.local pins the
-#                        static/disabled extension contract)
+#                        static/disabled extension contract; the
+#                        windows-msys tree first receives the
+#                        exception-of-record factory patch set —
+#                        patches/README.md)
 #   4. driver link       the fs TU (build/resources/tebako_python_main.c)
 #                        replaces Programs/python.o via the Makefile.pre
 #                        substitution; $(TEBAKO_LIBS) carries the scoped
@@ -59,12 +62,13 @@
 #                        as its own step)
 #
 # Exit codes (named, never silent): 64 usage · 103 configure · 104 build
-# · 105 install/assemble · 106 abi probe · 109 version grammar · 112
+# · 105 install/assemble · 106 abi probe · 107 msys source gate · 108
+# factory patch (windows-msys) · 109 version grammar · 112
 # platform/link input · 113 jit toolchain gate (llvm/host-python parity)
 # · 121/122 source fetch (sha mismatch / download)
 # · 123 link-unit miss/download · 124 link-unit sha mismatch/incomplete
-# · 125 tfs CLI fetch/verify · 131 image assemble/pack · 141/143 boot
-# smoke (tools/boot_smoke).
+# · 125 tfs CLI fetch/verify · 130 msys dll staging · 131 image
+# assemble/pack · 141/143 boot smoke (tools/boot_smoke).
 #
 # Usage:
 #   tools/build_runtime --python 3.13.15 [--output PATH] [--prefix DIR]
