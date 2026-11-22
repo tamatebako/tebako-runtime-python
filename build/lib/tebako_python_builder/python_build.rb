@@ -30,12 +30,16 @@ require "open3"
 
 module TebakoPythonBuilder
   # The relocatable CPython build (tools/build_runtime phases 3-4): the
-  # pristine tarball is extracted, configured, and built IN TREE (the
-  # extracted copy is this factory's scratch — never a published input),
-  # and the spec-17 driver is linked into the python exe by a
+  # pristine tarball (POSIX) resp. the source factory's patched
+  # windows-msys tree is extracted, receives this factory's
+  # exception-of-record patch set where one exists (FactoryPatches —
+  # msys only, patches/README.md), is configured, and is built IN TREE
+  # (the extracted copy is this factory's scratch — never a published
+  # input), and the spec-17 driver is linked into the python exe by a
   # build-time substitution on the GENERATED Makefile (the ruby factory's
   # config.status MAINLIBS substitution analog — a generated-build-file
-  # edit, never a source patch; tamatebako/python ships zero patches):
+  # edit, so the source-patch surface stays exactly the shipped series
+  # plus the declared factory set):
   #
   #   * Programs/python.o is replaced by Programs/tebako_python.o (the fs
   #     TU — build/resources/tebako_python_main.c — compiled from the
@@ -102,6 +106,7 @@ module TebakoPythonBuilder
     def run
       BuildHelpers.with_env(floor_env) do
         extract
+        apply_factory_patches if @platform.msys?
         gate_msys_socket_selectability if @platform.msys?
         gate_jit_toolchain if @python.jit?
         write_setup_local
@@ -219,7 +224,8 @@ module TebakoPythonBuilder
     def extract
       @src_dir = File.join(src_parent, tree_name)
       marker = File.join(src_parent, ".#{tree_name}.src-sha256")
-      if File.directory?(@src_dir) && File.file?(marker) && File.read(marker).strip == @src_sha256
+      stamp = extract_stamp
+      if File.directory?(@src_dir) && File.file?(marker) && File.read(marker).strip == stamp
         puts "-- CPython source #{@python_version} already extracted (sha256 #{@src_sha256})"
         return
       end
@@ -241,7 +247,36 @@ module TebakoPythonBuilder
       end
       FileUtils.mv(staged, @src_dir)
       FileUtils.rm_rf(staging_parent, secure: true)
-      File.write(marker, "#{@src_sha256}\n")
+      File.write(marker, "#{stamp}\n")
+    end
+
+    # The extracted tree's content stamp: the tarball's sha256, plus the
+    # factory patch set's fingerprint where one rides (msys). A patch
+    # edit with an unchanged source pin then re-extracts — a cached tree
+    # is only ever re-probed against the SAME patch bytes. Off msys (or
+    # with an empty set) the stamp is the bare sha256, byte-identical with
+    # the pre-machinery marker.
+    def extract_stamp
+      fingerprint = factory_patches.fingerprint
+      return @src_sha256 if fingerprint.empty?
+
+      "#{@src_sha256} factory-patches:#{fingerprint}"
+    end
+
+    # The windows-msys exception-of-record patch set (patches/README.md —
+    # #105's home): FactoryPatches owns the grammar, the selection, and
+    # the apply state machine. The call site gates on msys — POSIX never
+    # patches here (its autoconf path is correct by construction).
+    def factory_patches
+      @factory_patches ||= TebakoPythonBuilder::FactoryPatches.new(
+        platform: @platform, python_version: @python, repo_root: @repo_root
+      )
+    end
+
+    def apply_factory_patches
+      return if factory_patches.paths.empty?
+
+      factory_patches.apply(src_dir)
     end
 
     # The msys socket-selectability gate (windows builds only). Upstream

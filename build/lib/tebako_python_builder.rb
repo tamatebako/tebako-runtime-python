@@ -32,8 +32,11 @@
 # (tfs-python-<version>-src.tar.gz release assets, verified against the
 # release SHA256SUMS), with the spec-17 driver LINKED into the python3
 # executable (the README's LINKED-driver decision — the ruby pattern, not
-# the spec-29 wrapper). CPython is unpatched (tamatebako/python's zero-patch
-# contract), so the generated fs TU (build/resources/tebako_python_main.c)
+# the spec-29 wrapper). The POSIX legs build the pristine tree; the
+# windows-msys leg builds the source factory's patched windows-msys tree
+# plus this repo's exception-of-record factory patch set
+# (patches/README.md — FactoryPatches). Either way the generated fs TU
+# (build/resources/tebako_python_main.c)
 # boots the driver in-process and re-execs the interpreter under the
 # driver-armed preload-shim injection (the shim constructor re-mounts the
 # serialized mount table in the child — spec 22's tier-1 visibility).
@@ -45,6 +48,7 @@ module TebakoPythonBuilder
   autoload :ConsoleScripts,  File.expand_path("tebako_python_builder/console_scripts", __dir__)
   autoload :Contract,        File.expand_path("tebako_python_builder/contract", __dir__)
   autoload :Error,           File.expand_path("tebako_python_builder/error", __dir__)
+  autoload :FactoryPatches,  File.expand_path("tebako_python_builder/factory_patches", __dir__)
   autoload :ImageBuilder,    File.expand_path("tebako_python_builder/image_builder", __dir__)
   autoload :ImageManifest,   File.expand_path("tebako_python_builder/image_manifest", __dir__)
   autoload :ImagePackager,   File.expand_path("tebako_python_builder/image_packager", __dir__)

@@ -132,6 +132,20 @@
 #                        never surface an instant WSAEWOULDBLOCK
 #                        (10035), the msys pip connect pathology
 #                                                             [windows]
+#   mp-spawn             tools/mp_spawn_probe.py inside the runtime —
+#                        the tebako-runtime-python#105 regression gate:
+#                        cpython 3.14's multiprocessing/synchronize.py
+#                        imports sem_unlink from _multiprocessing
+#                        UNCONDITIONALLY (upstream's win32 build always
+#                        exports it — a no-op there — but the mingw
+#                        configure path drops it behind
+#                        POSIX_SEMAPHORES_NOT_ENABLED). Arm 1 pins the
+#                        exact import line; arm 2 runs a spawn-context
+#                        Pool(2).map end to end (windows' only start
+#                        method — every worker re-boots this runtime).
+#                        Fail closed on the ImportError class. POSIX
+#                        legs skip it: their autoconf path exports
+#                        sem_unlink by construction           [windows]
 #   e-flag               -E in the handed-off argv must be refused by
 #                        name (exit 2): the flags make getpath ignore
 #                        the driver-set PYTHONHOME — the only channel
@@ -160,8 +174,8 @@
 #
 # POSIX legs run the full set — every boot under the inherited PATH (the
 # platform's own loader machinery needs it). A windows leg runs bare +
-# materialize-boot + alias-closure + socket-timeout + e-flag + the
-# named-error trio (bad-mount, mount-root-malformed, override-ungranted);
+# materialize-boot + alias-closure + socket-timeout + mp-spawn + e-flag +
+# the named-error trio (bad-mount, mount-root-malformed, override-ungranted);
 # entrypoint and compute-floor ride both shapes (the common set), and
 # EVERY windows boot's PATH is scrubbed to the Windows system
 # directories (System32 + the Windows root + Wbem) — no mingw/msys
@@ -177,7 +191,7 @@
 #   tools/boot_smoke [--runtime-root DIR | --exe PATH] [--tfs PATH]
 #                    [--scenario all|bare|boot|payload|entrypoint|bad-mount|
 #                                materialize-boot|alias-closure|
-#                                socket-timeout|e-flag|
+#                                socket-timeout|mp-spawn|e-flag|
 #                                mount-root-override|
 #                                mount-root-malformed|override-ungranted|jit|
 #                                compute-floor]
@@ -492,7 +506,7 @@ def windows_system_path
 end
 
 KNOWN_SCENARIOS = %w[bare boot payload entrypoint bad-mount materialize-boot alias-closure socket-timeout
-                     e-flag mount-root-override mount-root-malformed override-ungranted jit
+                     mp-spawn e-flag mount-root-override mount-root-malformed override-ungranted jit
                      compute-floor].freeze
 # Scenarios that build/read images with the tfs CLI (entrypoint and
 # alias-closure read the packed image back through it).
@@ -505,8 +519,8 @@ def selected_scenarios(platform, only)
     selected += %w[boot payload mount-root-override jit] if
       %w[all boot payload mount-root-override jit].include?(only)
   else
-    selected += %w[materialize-boot alias-closure socket-timeout e-flag] if
-      %w[all materialize-boot alias-closure socket-timeout e-flag].include?(only)
+    selected += %w[materialize-boot alias-closure socket-timeout mp-spawn e-flag] if
+      %w[all materialize-boot alias-closure socket-timeout mp-spawn e-flag].include?(only)
   end
   selected += %w[bad-mount mount-root-malformed override-ungranted entrypoint compute-floor] if
     %w[all bad-mount mount-root-malformed override-ungranted entrypoint compute-floor].include?(only)
@@ -907,6 +921,29 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
                             timeout: SOCKET_PROBE_TIMEOUT)
         expect_ok("socket-timeout", out, err, st, "SOCKET-PROBE OVERALL: PASS")
         puts out.force_encoding(Encoding::UTF_8).scrub[/^DIAG .*$/].to_s
+      when "mp-spawn"
+        # The #105 regression gate (the header block):
+        # tools/mp_spawn_probe.py runs INSIDE the runtime as a host
+        # script path (the socket-timeout idiom) — arm 1 is
+        # synchronize.py's exact unconditional import, arm 2 the
+        # spawn-context Pool(2).map end to end. The probe is fail-closed;
+        # its OVERALL marker + exit 0 is the verdict. Every boot's PATH
+        # is the helper's scrubbed set, so the Pool workers — each a
+        # fresh boot of this very runtime — ride the audience-rule
+        # condition too. The deadline is the materialize tier's: the
+        # first boot extracts the env image, the workers hit the exec
+        # cache.
+        unless File.file?(image)
+          check("mp-spawn", false, "no sibling env image #{image}")
+          next
+        end
+        probe_path = File.join(REPO_ROOT, "tools", "mp_spawn_probe.py")
+        out, err, st = boot(executable, [probe_path], { "TEBAKO_RUNTIME_IMAGE" => image },
+                            timeout: MATERIALIZE_BOOT_TIMEOUT)
+        expect_ok("mp-spawn", out, err, st, "MP-SPAWN-PROBE OVERALL: PASS")
+        out.force_encoding(Encoding::UTF_8).scrub.each_line.grep(/\A(?:MODE|DIAG) /).each do |probe_line|
+          puts "     mp-spawn: #{probe_line.strip}"
+        end
       when "e-flag"
         # -E/-I make getpath ignore the environment (Modules/getpath.py's
         # ignore_environment consult for PYTHONHOME) — the ONLY channel

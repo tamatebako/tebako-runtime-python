@@ -468,7 +468,7 @@ platform ships).
   `EXPECTED_ENV_MATRIX`/`EXPECTED_PYTHON_MATRIX` rows.
 - `tools/build_runtime` — the build entry point (fetch → verify → build
   → link → pack → package → sidecars).
-- `tools/boot_smoke` — the post-build acceptance gate (14 scenarios):
+- `tools/boot_smoke` — the post-build acceptance gate (15 scenarios):
   stdlib + ssl + zlib imports off the mounted image, the dlopen
   extension path, the `TEBAKO_MOUNT_ROOT` 65/78 parity cases, the
   bare-exe dev-mode contract, the `jit` flavor probe (a jit line
@@ -482,12 +482,21 @@ platform ships).
   revert to fail-closed once it closes), and on windows the
   `alias-closure` self-containment
   proof (static-import-only pair, the image's declared PE closure, and
-  every boot under a PATH scrubbed to the Windows system directories).
+  every boot under a PATH scrubbed to the Windows system directories)
+  plus the `mp-spawn` gate (tebako-runtime-python#105 —
+  `_multiprocessing` must export `sem_unlink`; a spawn-context
+  `Pool(2).map` proves it end to end).
   Needs `TEBAKO_TFS` (the tfs CLI, for the mount probe) and
   the runtime-packages tree.
+- `patches/` — the exception-of-record factory patch set
+  (windows-msys only; its README is the contract): a fix the runtime
+  build needs while the pinned `source_release` does not carry it,
+  applied to the extracted tree by `PythonBuild` via `FactoryPatches`
+  and dropped when the source release grows it. Today: the MSYS2-0038
+  `sem_unlink` port for 3.14 (tebako-runtime-python#105).
 - `build/lib/tebako_python_builder/` — the build model (the
-  tebako-runtime-ruby `build/lib` port): Contract, Platform,
-  PythonVersion, SourceFetcher, LinkUnit, Mlibs, PythonBuild,
+  tebako-runtime-ruby `build/lib` port): Contract, FactoryPatches,
+  Platform, PythonVersion, SourceFetcher, LinkUnit, Mlibs, PythonBuild,
   ImageBuilder, ImageManifest, ImagePackager, PeImports, SupportDlls,
   TfsTool, Builder.
 - `build/resources/tebako_python_main.c` — the fs TU template (the
@@ -529,3 +538,7 @@ platform ships).
 3. Build-graph diff-awareness for the four build triggers (they fan out
    21 legs per event today; the ruby factory's plan job computes the
    diff — the headers note the follow-up).
+4. Drop `patches/3.14/multiprocessing_sem_unlink_msys.patch` once the
+   pinned `source_release` carries MSYS2 0038 in the windows-msys series
+   (tamatebako/python's home for the fix; the apply step detects the
+   carried state and skips loudly until then — tebako-runtime-python#105).
