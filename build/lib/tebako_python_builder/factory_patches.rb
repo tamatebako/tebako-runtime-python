@@ -27,6 +27,7 @@
 
 require "digest"
 require "open3"
+require "tempfile"
 
 module TebakoPythonBuilder
   # The factory patch set (patches/README.md's contract): the exception of
@@ -91,25 +92,51 @@ module TebakoPythonBuilder
     def apply(src_dir)
       paths.each do |patch_file|
         name = File.basename(patch_file)
-        if git_apply_check(src_dir, patch_file)
-          git_apply(src_dir, patch_file)
-          verify_carried(src_dir, patch_file, name)
-          puts "   ... factory patch applied: #{name}"
-        elsif git_apply_check(src_dir, patch_file, reverse: true)
-          puts "   ... factory patch #{name} already present in the tree " \
-               "(a cached rebuild, or the pinned source carries the fix — " \
-               "drop the file on the source_release bump that picks it up)"
-        else
-          raise TebakoPythonBuilder::Error.new(
-            "factory patch #{name} neither applies to nor is present in #{src_dir} — the " \
-            "#{@python.abi_line} line's source drifted from the patch's context; re-author the " \
-            "patch against the new tree or drop it (patches/README.md's removal rule)", APPLY_ERROR_CODE
-          )
+        with_apply_input(patch_file) do |input|
+          if git_apply_check(src_dir, input)
+            git_apply(src_dir, input)
+            verify_carried(src_dir, input, name)
+            puts "   ... factory patch applied: #{name}"
+          elsif git_apply_check(src_dir, input, reverse: true)
+            puts "   ... factory patch #{name} already present in the tree " \
+                 "(a cached rebuild, or the pinned source carries the fix — " \
+                 "drop the file on the source_release bump that picks it up)"
+          else
+            raise TebakoPythonBuilder::Error.new(
+              "factory patch #{name} neither applies to nor is present in #{src_dir} — the " \
+              "#{@python.abi_line} line's source drifted from the patch's context; re-author the " \
+              "patch against the new tree or drop it (patches/README.md's removal rule)", APPLY_ERROR_CODE
+            )
+          end
         end
       end
     end
 
     private
+
+    # The patch input git consumes: the committed file, or an LF-normalized
+    # temp copy when the checkout re-encoded it (a windows autocrlf
+    # checkout spells the .patch CRLF; every context line then mismatches
+    # the LF source tree — the first windows run of the change that
+    # introduced this machinery died exactly so). The repo pins eol=lf in
+    # .gitattributes; this normalization is the loud backstop, never a
+    # silent rewrite — the note lands in the leg's log.
+    def with_apply_input(patch_file)
+      bytes = File.binread(patch_file)
+      unless bytes.include?("\r\n")
+        yield patch_file
+        return
+      end
+
+      puts "   ... #{File.basename(patch_file)} is CRLF-encoded by this checkout " \
+           "(.gitattributes pins eol=lf) — applying the LF-normalized bytes"
+      Tempfile.create(["factory-patches", ".patch"]) do |tmp|
+        tmp.binmode
+        tmp.write(bytes.gsub("\r\n", "\n"))
+        tmp.flush
+        yield tmp.path
+      end
+    end
 
     # The build tree sits under the factory's own checkout, so repo
     # discovery must stop at the tree's parent: inside an enclosing repo

@@ -82,6 +82,12 @@ RSpec.describe TebakoPythonBuilder::FactoryPatches do
       expect(File.read(target)).to eq("int after;\nint anchor;\n")
     end
 
+    it "normalizes a CRLF-encoded checkout copy loudly instead of failing the leg" do
+      File.binwrite(patch_file, File.binread(patch_file).gsub(/(?<!\r)\n/, "\r\n"))
+      expect { msys_set(root).apply(tree) }.to output(/CRLF-encoded/).to_stdout
+      expect(File.read(target)).to eq("int after;\nint anchor;\n")
+    end
+
     it "refuses a drifted tree with the named exit code (108)" do
       File.write(target, "int unrelated;\n")
       expect { msys_set(root).apply(tree) }

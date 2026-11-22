@@ -1,0 +1,5 @@
+# Factory patch files are byte-meaningful build inputs: their context
+# lines must match the LF-spelled CPython source tree byte for byte. A
+# windows checkout's autocrlf would rewrite them to CRLF and turn every
+# windows leg's apply step into the named exit 108 (FactoryPatches).
+*.patch text eol=lf
