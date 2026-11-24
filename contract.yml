@@ -115,6 +115,17 @@ macos_deployment_target: "14.0"
 # GCC's 4-byte padding no longer ships a pre-rename aws-lc export
 # directive into the windows leg's link (this repo's #53). Contract
 # unchanged (2).
+# KNOWN-BAD (fleet, tebako#1095's side finding): the published v0.3.0
+# pair — this factory's 0.3.0 runtime, link unit v2.8.49 — reproducibly
+# WEDGES on the current macos-15-intel fleet, never reaching the
+# interpreter (3/3 reproductions: a >=40-minute hang in run 45324096740,
+# hard-killed at the 420 s bound in runs 45330380303/45338794570). The
+# v0.2.0 (v2.3.2) and v0.3.5 (v2.8.78) pairs boot unaffected on the same
+# runners, so the line the factory builds today is clear; the note
+# stands for old-line consumers — published pairs stay installable
+# forever (spec 05 §2's era law), and a catalog/mop-up rerun of the
+# v0.3.0 line would relink the same wedging unit. Old-line consumers on
+# that fleet resolve v0.3.5+.
 # v2.8.53: the lazy mount at both TFS layers (tebako#848) — the preload
 # shim's TEBAKO_TFS_MOUNTS builder state-detects a LAZY_SEEDING env image
 # and mounts its caching range source, so a fresh lazy line serves the
