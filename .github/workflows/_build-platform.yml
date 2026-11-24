@@ -806,6 +806,75 @@ jobs:
           export TEBAKO_TFS
           tools/boot_smoke
 
+      # EXPERIMENT exp/xcode-16.3-arm64 — interleaved three-arm probe.
+      # The gate's arm64 readings span 1.35-2.13 across same-image legs:
+      # the fleet is hardware-heterogeneous and the builds scale
+      # differently across it (the ratio anti-correlates with the
+      # reference's own speed). This step removes the instance lottery —
+      # on THIS runner, back-to-back, six interleaved rounds of the
+      # setup-python reference (fib(30)), the leg's fresh build
+      # (fib(35)), and the sha256-verified published v0.3.3 binary
+      # (fib(35)): thermal and instance effects hit every arm alike, and
+      # the per-round per-call ratios compare BINARIES, not instances.
+      - name: EXPERIMENT interleaved three-arm probe (macos-arm64)
+        if: always() && matrix.os == 'macos' && matrix.arch == 'arm64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fresh=$(find runtime-packages -maxdepth 1 -name 'tebako-runtime-*' -type f \
+                    ! -name '*.tfs' ! -name '*.sha256' ! -name '*.json' ! -name '*.blksum.json' | head -1)
+          fresh_img="${fresh%.exe}.tfs"
+          ver="${{ matrix.python }}"
+          base="tebako-runtime-0.3.3-python-${ver}-macos-arm64"
+          gh release download v0.3.3 --repo tamatebako/tebako-runtime-python \
+            -p "$base" -p "$base.sha256" -p "$base.tfs" -p "$base.tfs.sha256" --clobber --dir /tmp/v033
+          (cd /tmp/v033 && shasum -a 256 -c "$base.sha256" && shasum -a 256 -c "$base.tfs.sha256")
+          chmod +x "/tmp/v033/$base"
+          export FRESH="$GITHUB_WORKSPACE/$fresh" FRESH_IMG="$GITHUB_WORKSPACE/$fresh_img"
+          export V033="/tmp/v033/$base" V033_IMG="/tmp/v033/$base.tfs"
+          python3 - <<'PY'
+          import os, statistics, subprocess, time
+
+          def fib(n):
+              return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+          def ref_once():
+              t0 = time.perf_counter(); fib(30); return time.perf_counter() - t0
+
+          PROBE = ("import time\n"
+                   "def fib(n):\n    return n if n < 2 else fib(n-1)+fib(n-2)\n"
+                   "t0=time.perf_counter(); fib(35); print(f'{time.perf_counter()-t0:.4f}')\n")
+          COMPILER_PROBE = "import platform; print(platform.python_compiler())"
+
+          def arm_once(exe, img, probe=PROBE):
+              env = dict(os.environ, TEBAKO_RUNTIME_IMAGE=img)
+              out = subprocess.run([exe, "-c", probe], env=env,
+                                   capture_output=True, text=True, check=True)
+              return out.stdout.strip()
+
+          def pc(t, n):
+              return t / {30: 2692537, 35: 29860703}[n]
+
+          fresh = (os.environ["FRESH"], os.environ["FRESH_IMG"])
+          v033 = (os.environ["V033"], os.environ["V033_IMG"])
+          import platform as _p
+          print("reference compiler:", _p.python_compiler())
+          print("fresh compiler:", arm_once(*fresh, COMPILER_PROBE))
+          print("v0.3.3 compiler:", arm_once(*v033, COMPILER_PROBE))
+          totals = {"fresh": [], "v0.3.3": [], "reference": []}
+          for r in range(6):
+              ref = statistics.median(ref_once() for _ in range(3))
+              f = min(float(arm_once(*fresh)) for _ in range(2))
+              v = min(float(arm_once(*v033)) for _ in range(2))
+              totals["reference"].append(ref); totals["fresh"].append(f); totals["v0.3.3"].append(v)
+              print(f"round {r+1}: ref {ref:.4f} fresh {f:.4f} v033 {v:.4f} | "
+                    f"per-call fresh/ref {pc(f,35)/pc(ref,30):.3f} v033/ref {pc(v,35)/pc(ref,30):.3f}")
+          mr = statistics.median(totals["reference"]); mf = statistics.median(totals["fresh"]); mv = statistics.median(totals["v0.3.3"])
+          print(f"INTERLEAVED-VERDICT: ref median {mr:.4f}s | fresh {mf:.4f}s ratio {pc(mf,35)/pc(mr,30):.3f} | "
+                f"v0.3.3 {mv:.4f}s ratio {pc(mv,35)/pc(mr,30):.3f} | fresh/v0.3.3 {mf/mv:.3f}")
+          PY
+
       - name: Boot smoke (windows)
         if: matrix.os == 'windows' && steps.build-windows.outputs.skipped != 'true'
         shell: msys2 {0}
