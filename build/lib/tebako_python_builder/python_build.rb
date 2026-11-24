@@ -415,6 +415,25 @@ module TebakoPythonBuilder
               "--with-openssl=#{openssl_prefix}",
               "--with-openssl-rpath=no"]
       args << "--enable-experimental-jit" if @python.jit?
+      # The macOS 3.14 lines build the classic computed-goto ceval, never
+      # the tail-calling interpreter. The fleet's macos-14 -> macos-15
+      # move (aedeb62, ahead of GitHub's 2026-11-02 macos-14 retirement)
+      # took the arm64 build toolchain from Apple Clang 15 (Xcode/CLT
+      # 15.4) to Apple Clang 17 (clang-1700.0.13.3 — Xcode 16.3 and 16.4
+      # alike, so no DEVELOPER_DIR pin discriminates; exp leg
+      # 45358458871). CPython 3.14's configure auto-enables the
+      # tail-calling interpreter when the compiler passes its musttail
+      # probe; clang 15 never built it. On the current fleet the clang-17
+      # build of this same recipe reads a per-call compute ratio of
+      # 1.6-2.1 against the same on-system 3.14.7 reference where the
+      # published v0.3.3 (clang-15) binary reads 1.099 head-to-head on
+      # the same image (runs 45349338822/45352240234/45353646257/
+      # 45358458871/45361240827) — and with the tail-call interpreter
+      # OFF the clang-17 build returns to parity-class (run 45362178911,
+      # ratio 1.353). The flag pins that build shape
+      # deterministically, whatever toolchain the fleet carries next;
+      # revisiting it wants a measured case, not an upstream default.
+      args << "--with-tail-call-interp=no" if @platform.macos? && @python.major_minor == [3, 14]
       puts "-- Configuring CPython #{@python_version} (#{@platform.host_id}#{@python.jit? ? ", JIT on" : ""})"
       TebakoPythonBuilder::BuildHelpers.run_with_capture(args, env: configure_env, chdir: src_dir)
     rescue TebakoPythonBuilder::Error => e
