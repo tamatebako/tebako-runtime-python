@@ -75,7 +75,7 @@ jobs:
     env:
       PYVER: ${{ inputs.pyver }}
       FIBN: ${{ inputs.fibn }}
-      WORK: ${{ runner.workspace }}/diag-1095
+      WORK: ${{ github.workspace }}/diag-1095
     steps:
       - name: Host facts
         run: |
@@ -288,6 +288,6 @@ jobs:
         with:
           name: diag-1095-probes
           path: |
-            ${{ runner.workspace }}/diag-1095/ext/
-            ${{ runner.workspace }}/diag-1095/probe.py
+            ${{ github.workspace }}/diag-1095/ext/
+            ${{ github.workspace }}/diag-1095/probe.py
           if-no-files-found: ignore
