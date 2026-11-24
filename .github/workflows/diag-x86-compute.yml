@@ -259,6 +259,7 @@ jobs:
           exit $rc
 
       - name: External probes on the defective shape (v0.3.5 tebako boot)
+        if: always()
         run: |
           set -uo pipefail
           cd "$WORK"
@@ -315,6 +316,7 @@ jobs:
           fi
 
       - name: External probes on the healthy era (v0.2.0 tebako boot) — the control
+        if: always()
         run: |
           set -uo pipefail
           cd "$WORK"
