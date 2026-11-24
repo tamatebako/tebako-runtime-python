@@ -175,8 +175,51 @@ jobs:
       - name: Baseline — system python
         run: |
           cd "$WORK"
+          cat > bounded.sh <<'EOS'
+          #!/bin/bash
+          # bounded <seconds> <cmd...> — run cmd with a hard KILL deadline.
+          s="$1"; shift
+          ( "$@" & p=$!; ( sleep "$s"; kill -KILL $p 2>/dev/null ) & w=$!
+            wait $p; rc=$?; kill $w 2>/dev/null; exit $rc )
+          EOS
+          chmod +x bounded.sh
           env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN /usr/bin/python3 probe.py \
             || echo "(system python unavailable — skipped)"
+
+      - name: Control — the covenant's on-system python (setup-python 3.14.7)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.14.7'
+
+      - name: Control — setup-python fib (the covenant's on-system arm, re-measured today)
+        run: |
+          cd "$WORK"
+          which python3; python3 --version
+          env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN python3 probe.py
+
+      - name: Control — raw C fib(40) (the machine's own clang, -O3)
+        run: |
+          set -euo pipefail
+          cd "$WORK"
+          cat > fibc.c <<'EOS'
+          #include <stdio.h>
+          #include <time.h>
+          static long fib(int n) { return n < 2 ? n : fib(n-1) + fib(n-2); }
+          int main(void) {
+              for (int i = 0; i < 3; i++) {
+                  struct timespec a, b;
+                  clock_gettime(CLOCK_MONOTONIC, &a);
+                  volatile long r = fib(40);
+                  clock_gettime(CLOCK_MONOTONIC, &b);
+                  double w = (double)(b.tv_sec - a.tv_sec) + (double)(b.tv_nsec - a.tv_nsec) / 1e9;
+                  printf("c-fib(40): %.3f s (r=%ld)\n", w, r);
+              }
+              return 0;
+          }
+          EOS
+          clang -O3 -o fibc fibc.c
+          ./fibc
+          clang --version | head -1
 
       - name: "Shape A (bare control) — all eras: same exe, host stdlib, no tebako runtime"
         run: |
@@ -185,9 +228,9 @@ jobs:
           rc=0
           for era in v0.2.0 v0.3.0 v0.3.5; do
             echo "############ bare $era"
-            env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+            ./bounded.sh 420 env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
               PYTHONHOME="$WORK/$era/root" \
-              "$WORK/$era/exe" probe.py || { echo "::warning::bare $era rc=$?"; rc=1; }
+              "$WORK/$era/exe" probe.py || { echo "::warning::bare $era rc=$? (137 = the 420s bound)"; rc=1; }
           done
           exit $rc
 
@@ -197,7 +240,7 @@ jobs:
           cd "$WORK"
           shim="$WORK/v0.3.5/root/lib/tebako/libtfs_preload.dylib"
           [ -f "$shim" ] || { echo "::error::no shim at $shim"; exit 1; }
-          env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+          ./bounded.sh 420 env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
             PYTHONHOME="$WORK/v0.3.5/root" \
             DYLD_INSERT_LIBRARIES="$shim" \
             "$WORK/v0.3.5/exe" probe.py
@@ -209,9 +252,9 @@ jobs:
           rc=0
           for era in v0.2.0 v0.3.0 v0.3.5; do
             echo "############ tebako $era"
-            env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+            ./bounded.sh 420 env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
               TEBAKO_RUNTIME_IMAGE="$WORK/$era/env.tfs" \
-              "$WORK/$era/exe" probe.py || { echo "::warning::tebako $era rc=$?"; rc=1; }
+              "$WORK/$era/exe" probe.py || { echo "::warning::tebako $era rc=$? (137 = the 420s bound — the run-1 wedge shape)"; rc=1; }
           done
           exit $rc
 
@@ -249,6 +292,15 @@ jobs:
                   fsp=$!; sleep 6; sudo kill $fsp 2>/dev/null ) || true
               fi
             fi
+            # Bounded wait (the v0.3.0 wedge lesson): 420s, then KILL.
+            for i in $(seq 1 84); do
+              kill -0 $pid 2>/dev/null || break
+              sleep 5
+            done
+            if kill -0 $pid 2>/dev/null; then
+              echo "::warning::v0.3.5 tebako boot WEDGED past 420s — hard-killed (the run-1 v0.3.0 shape)"
+              kill -KILL $pid 2>/dev/null
+            fi
             wait $pid; echo "probe process rc=$?"
             sleep 2
             [ -s ext/dtruss.txt ] && { echo "===== dtruss counts"; cat ext/dtruss.txt; }
@@ -276,6 +328,14 @@ jobs:
             echo "===== ps -M (thread list)"; ps -M -p $pid || true
             ps -o pid,%cpu,state,time,comm -p $pid || true
             sample $pid 5 -file ext/sample020.txt 2>&1 || true
+            for i in $(seq 1 84); do
+              kill -0 $pid 2>/dev/null || break
+              sleep 5
+            done
+            if kill -0 $pid 2>/dev/null; then
+              echo "::warning::v0.2.0 tebako boot WEDGED past 420s — hard-killed"
+              kill -KILL $pid 2>/dev/null
+            fi
             wait $pid; echo "rc=$?"
             head -80 ext/sample020.txt 2>/dev/null || true
           else
