@@ -388,6 +388,28 @@ jobs:
               uid=$(stat -c %u /mnt/w/contract.yml); gid=$(stat -c %g /mnt/w/contract.yml)
               chown -R "$uid:$gid" /mnt/w/.build /mnt/w/runtime-packages 2>/dev/null || true'
 
+      # EXPERIMENT exp/xcode-16.3-arm64 — the macos/arm64 legs build
+      # under the pinned Xcode (compute_matrix's developer_dir; "" on
+      # every other leg = the runner image default, no step). /usr/bin/cc
+      # and xcrun honor DEVELOPER_DIR, so CPython's configure + make ride
+      # the pinned toolchain. An absent pin dir is a named error, never a
+      # quiet fall-back to the default toolchain — the experiment's whole
+      # point is which clang compiled the build, and the step prints the
+      # resolution into the log as the evidence.
+      - name: Pin the build toolchain (developer_dir legs)
+        if: matrix.os == 'macos' && matrix.developer_dir != ''
+        run: |
+          set -euo pipefail
+          dir="${{ matrix.developer_dir }}"
+          if [ ! -d "$dir" ]; then
+            echo "::error::toolchain pin: $dir is absent from this runner image — the pin's premise (the image carries both Xcodes) no longer holds"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$dir" >> "$GITHUB_ENV"
+          echo "toolchain pin: DEVELOPER_DIR=$dir"
+          DEVELOPER_DIR="$dir" xcrun --find clang
+          DEVELOPER_DIR="$dir" clang --version
+
       - name: Build the runtime (macos)
         if: matrix.os == 'macos'
         run: tools/build_runtime --python "${{ matrix.python }}"

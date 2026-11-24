@@ -94,6 +94,10 @@
 #                                 pid mapping; upstream owner:
 #                                 tamatebako/tebako release.yml's
 #                                 matrix.platform).
+#   developer_dir               — the leg's DEVELOPER_DIR toolchain pin
+#                                 ("" = the runner image default). Only
+#                                 macos/arm64 is pinned, to Xcode 16.3 —
+#                                 see DEVELOPER_DIR_PIN below.
 #
 # The windows/arm64 leg carries two gates, both LOUD (the no-jit /
 # no-scenario-asset precedents below — a skipped leg names its unmet
@@ -143,6 +147,22 @@ LINK_UNIT_PID = TebakoPythonBuilder::Platform::LINK_UNIT_PIDS
 # A stand-in mingw/ucrt host, used only to ask SourceFetcher for the
 # windows-msys scenario asset name (its grammar branches on #msys?).
 MINGW_PLATFORM = TebakoPythonBuilder::Platform.new("x86_64-w64-mingw32").freeze
+
+# EXPERIMENT exp/xcode-16.3-arm64 — the macos/arm64 toolchain pin under
+# test. Premise: the published v0.3.3 macos-arm64 exe (built 2026-10-21,
+# compiler string Clang 15.0.0 clang-1500.3.9.4 = Xcode 16.3) reads the
+# compute-floor ratio at parity-class against the on-system reference,
+# while fresh builds of the same recipe on the current image
+# (macos-15-arm64 20261118.0550.1, default Xcode 16.4 = Apple Clang 17)
+# read 1.6-2.1 on the 3.14 legs (runs 45349338822/45352240234/
+# 45353646257). The image still carries Xcode 16.3 at the path below
+# (its own readme); the pin rides DEVELOPER_DIR, which /usr/bin/cc and
+# xcrun honor, so CPython's configure picks the 16.3 clang with no other
+# change. A leg green under the pin convicts Clang 17; a leg red at the
+# same ratio exonerates the toolchain.
+DEVELOPER_DIR_PIN = {
+  ["macos", "arm64"] => "/Applications/Xcode_16.3.app"
+}.freeze
 
 def usage_error(message)
   warn "compute_matrix: #{message}"
@@ -323,6 +343,7 @@ env.each do |row|
       jit_llvm: line.jit? ? line.jit_llvm_major.to_s : "",
       reference_python: line.base_version,
       reference_line: line.major_minor.join("."),
+      developer_dir: DEVELOPER_DIR_PIN.fetch([os, arch], ""),
       container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])
     }
