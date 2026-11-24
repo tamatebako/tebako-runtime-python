@@ -81,9 +81,15 @@
 #                        on-system python (actions/setup-python at the
 #                        leg's base version — the covenant's on-system
 #                        provisioner) as a sibling step and times
-#                        tools/compute_reference_probe.py (fib(30)
-#                        best-of-3, the same shape at a smaller N),
-#                        handing the measurement down as
+#                        tools/compute_reference_probe.py (fib(30), the
+#                        MEDIAN of 25 runs — at ~0.1 s a run a best-of-3
+#                        min samples the runner's instantaneous state,
+#                        not its sustained rate: the first full-matrix
+#                        run's reference windows spread 29% within
+#                        themselves and false-red two healthy macos-arm64
+#                        legs, run 45344792366; the covenant's cells gate
+#                        on medians for the same reason), handing the
+#                        measurement down as
 #                        COMPUTE_FLOOR_REFERENCE_SECONDS /
 #                        COMPUTE_FLOOR_REFERENCE_N. The recursive fib's
 #                        call count is exact per N (T(n) = 2*F(n+1) - 1),
@@ -678,10 +684,12 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         best = out[/^best: (\d+(?:\.\d+)?)$/, 1]&.to_f
         # The same-leg on-system reference (the header block): the
         # workflow's sibling step times tools/compute_reference_probe.py
-        # under setup-python at the leg's base version on THIS runner and
-        # hands the measurement down. Missing or malformed is a WIRING
-        # failure — named here, never a silently degraded gate; a local
-        # run gets the exact remediation.
+        # under setup-python at the leg's base version on THIS runner
+        # (the median of its 25 runs — the seconds-scale sustained-rate
+        # statistic; the tebako arm's 4 s runs self-average, so its
+        # best-of-3 stands) and hands the measurement down. Missing or
+        # malformed is a WIRING failure — named here, never a silently
+        # degraded gate; a local run gets the exact remediation.
         ref_seconds = ENV.fetch("COMPUTE_FLOOR_REFERENCE_SECONDS", nil).to_s
         ref_n = ENV.fetch("COMPUTE_FLOOR_REFERENCE_N", nil).to_s
         unless ref_seconds.match?(/\A\d+(?:\.\d+)?\z/) && ref_seconds.to_f.positive? &&
@@ -690,19 +698,19 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
                 "COMPUTE_FLOOR_REFERENCE_SECONDS=#{ref_seconds.inspect} " \
                 "COMPUTE_FLOOR_REFERENCE_N=#{ref_n.inspect} — the ratio gate needs the sibling " \
                 "step's measurement on this runner; locally: python3 tools/compute_reference_probe.py, " \
-                "then export both vars off its best:/n: lines")
+                "then export both vars off its median:/n: lines")
           next
         end
         reference = ref_seconds.to_f
         reference_n = ref_n.to_i
         ratio = best.nil? ? nil : (best / fib_calls(COMPUTE_FIB_N)) / (reference / fib_calls(reference_n))
         ratio_text = ratio.nil? ? "n/a" : format("%.3f", ratio)
-        puts "     compute-floor: reference fib(#{reference_n}) best #{reference}s on-system — " \
+        puts "     compute-floor: reference fib(#{reference_n}) median #{reference}s on-system — " \
              "per-call ratio #{ratio_text} (limit #{COMPUTE_FLOOR_MAX_RATIO}x)"
         floor = "compute-floor: per-call rate within #{COMPUTE_FLOOR_MAX_RATIO}x the same-leg " \
                 "on-system reference"
         detail = "fib(#{COMPUTE_FIB_N}) best #{best.inspect}s vs the reference's fib(#{reference_n}) " \
-                 "best #{reference}s (runs in the log above) — per-call ratio #{ratio_text}, limit " \
+                 "median #{reference}s (runs in the log above) — per-call ratio #{ratio_text}, limit " \
                  "#{COMPUTE_FLOOR_MAX_RATIO}x; a leg computing at a fraction of the reference's rate " \
                  "is a slow BUILD, never a publishable artifact " \
                  "(tebako-runtime-python#79)\nstdout: #{out}\nstderr: #{err}"

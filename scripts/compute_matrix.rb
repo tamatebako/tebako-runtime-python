@@ -72,6 +72,12 @@
 #                                 PythonVersion owns the -jit grammar, so
 #                                 this flow replaces any workflow-side
 #                                 suffix strip (ecosystem SSOT invariant).
+#   reference_line              — the reference's major.minor line
+#                                 ("3.14"): the provisioning fallback
+#                                 when setup-python's manifest carries no
+#                                 exact micro (it lags the factory's pins
+#                                 on the older lines), and the measure
+#                                 step's generation assertion.
 #   container                   — the tpkg-builder image ref with
 #                                 contract.yml's container_version tag
 #                                 applied, null for the runner-native legs
@@ -316,6 +322,7 @@ env.each do |row|
       sign_tool_host_id: (os == "linux-musl" ? "linux-gnu-#{arch}" : host_id),
       jit_llvm: line.jit? ? line.jit_llvm_major.to_s : "",
       reference_python: line.base_version,
+      reference_line: line.major_minor.join("."),
       container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])
     }
