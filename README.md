@@ -175,6 +175,26 @@ Two upstream-source facts shape the msys build's socket-timeout behavior
   `connect_ex` + select-wait), and runs under any interpreter for
   comparison, including a plain msys2 python.
 
+## The macOS configure shape
+
+The 3.14 lines build the **classic computed-goto ceval** on macOS
+(`--with-tail-call-interp=no` in `PythonBuild#configure`), never the
+tail-calling interpreter CPython 3.14's configure auto-enables when the
+compiler passes its musttail probe. The fleet's macos-14 → macos-15
+move (2026-10-31, ahead of GitHub's 2026-11-02 macos-14 retirement)
+took the arm64 build toolchain from Apple Clang 15 (Xcode/CLT 15.4) to
+Apple Clang 17 (clang-1700.0.13.3 — Xcode 16.3 and 16.4 alike, so no
+`DEVELOPER_DIR` pin discriminates). Fresh clang-17 builds of the same
+recipe read a per-call compute ratio of 1.6–2.1 against the same-leg
+on-system 3.14.7 reference, while the published clang-15 binary reads
+1.099–1.122 head-to-head on the current image, and the same clang-17
+build with the tail-call interpreter OFF reads 1.353 — mechanism and
+remedy proven on the current fleet (the exp/xcode-16.3-arm64 runs
+45358458871/45361240827/45362178911; the gate that caught it is the
+compute-floor ratio gate in `tools/boot_smoke`). The flag pins the
+build shape deterministically, whatever toolchain the fleet carries
+next; lifting it wants a measured case, not an upstream default.
+
 ## The -E flag on windows
 
 `-E`/`-I` make getpath ignore the environment — the only channel the
