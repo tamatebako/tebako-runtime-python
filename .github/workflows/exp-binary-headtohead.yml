@@ -1,0 +1,91 @@
+# Copyright (c) 2026 [Ribose Inc](https://www.ribose.com).
+# All rights reserved.
+# This file is a part of tamatebako
+#
+# EXPERIMENT exp/xcode-16.3-arm64 — dispatch-only, never on push/PR.
+#
+# The decisive head-to-head for the 3.14/macos-arm64 compute-floor gap:
+# the DEVELOPER_DIR pin could not discriminate (the image's Xcode 16.3
+# AND 16.4 both ship Apple Clang 17.0.0 clang-1700.0.13.3 — the pinned
+# leg read 1.630, run 45358458871), and the toolchain that built the
+# published v0.3.3 exe (Clang 15.0.0 clang-1500.3.9.4 = Xcode/CLT 15.x)
+# no longer exists on the hosted image. So the compiler question is
+# answered by holding everything ELSE constant: this job runs the
+# PUBLISHED v0.3.3 binary (sha256-verified against the release sidecars)
+# through the exact compute-floor probe on the current image, against
+# the same setup-python 3.14.7 reference the factory legs use. If the
+# clang-15 binary reads at parity-class (≈1.0–1.5) where the same-recipe
+# fresh clang-17 builds read 1.6–2.1 on this same image today (runs
+# 45349338822/45352240234/45353646257/45358458871), the toolchain move
+# is convicted; if the old binary also reads ≈1.6, the toolchain is
+# exonerated and the cause is in the current fleet itself.
+
+name: exp-binary-headtohead
+
+on:
+  workflow_dispatch:
+
+jobs:
+  headtohead:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0 (the covenant's pin — the same provisioner, tebako#1095's reference arm)
+        with:
+          python-version: "3.14.7"
+
+      - name: Download + verify the published v0.3.3 macos-arm64 pair
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download v0.3.3 --repo tamatebako/tebako-runtime-python \
+            -p "tebako-runtime-0.3.3-python-3.14.7-macos-arm64" \
+            -p "tebako-runtime-0.3.3-python-3.14.7-macos-arm64.sha256" \
+            -p "tebako-runtime-0.3.3-python-3.14.7-macos-arm64.tfs" \
+            -p "tebako-runtime-0.3.3-python-3.14.7-macos-arm64.tfs.sha256" \
+            --clobber --dir v033
+          (cd v033 && shasum -a 256 -c tebako-runtime-0.3.3-python-3.14.7-macos-arm64.sha256 \
+                             && shasum -a 256 -c tebako-runtime-0.3.3-python-3.14.7-macos-arm64.tfs.sha256)
+          chmod +x v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64
+
+      - name: Reference probe (the gate's denominator)
+        run: python3 tools/compute_reference_probe.py | tee reference.out
+
+      - name: v0.3.3 binary probe (fib(35) best-of-3, the gate's numerator)
+        run: |
+          set -euo pipefail
+          TEBAKO_RUNTIME_IMAGE=v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64.tfs \
+            v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64 -c "
+          import platform, sysconfig, time
+          def fib(n):
+              return n if n < 2 else fib(n - 1) + fib(n - 2)
+          def one():
+              t0 = time.perf_counter()
+              fib(35)
+              return time.perf_counter() - t0
+          runs = [one() for _ in range(3)]
+          print('COMPUTE-FLOOR v0.3.3')
+          print('python:', platform.python_version())
+          print('compiler:', platform.python_compiler())
+          print('opt:', (sysconfig.get_config_var('OPT') or ''),
+                '|', (sysconfig.get_config_var('CFLAGS') or ''),
+                '| Py_DEBUG:', sysconfig.get_config_var('Py_DEBUG'))
+          print('runs:', ' '.join(f'{r:.3f}' for r in runs))
+          print('best:', f'{min(runs):.3f}')
+          " | tee v033.out
+
+      - name: Head-to-head ratio (the gate's own normalization)
+        run: |
+          set -euo pipefail
+          median=$(awk '/^median: /{print $2}' reference.out)
+          best=$(awk '/^best: /{print $2}' v033.out)
+          [ -n "$median" ] && [ -n "$best" ] || {
+            echo "::error::missing probe output (median='$median' best='$best') — the experiment's wiring failed, named"
+            exit 1
+          }
+          awk -v b="$best" -v m="$median" 'BEGIN {
+            # fib_calls(n) = 2*F(n+1)-1 — boot_smoke's normalization
+            printf "v0.3.3 (clang-15 build) per-call ratio vs the same-leg reference: %.3f\n", (b / 29860703) / (m / 2692537)
+          }'
