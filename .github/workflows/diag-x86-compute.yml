@@ -83,7 +83,8 @@ jobs:
           uname -a
           arch
           sysctl -n machdep.cpu.brand_string hw.model hw.ncpu hw.physicalcpu hw.logicalcpu kern.osversion
-          pmset -g thermlog | tail -8 || true
+          # pmset -g thermlog FOLLOWS the log (never exits) — bound it.
+          ( pmset -g thermlog & P=$!; sleep 3; kill $P 2>/dev/null; wait $P 2>/dev/null ) | tail -8 || true
           sudo -n true && echo "sudo: passwordless" || echo "sudo: unavailable"
           /usr/bin/python3 --version || true
 
