@@ -44,7 +44,12 @@
 # Stage 2 (build): one leg per (python x arch) of this platform:
 #   tools/build_runtime -> ci/check_symbol_provenance.sh ->
 #   tools/boot_smoke -> the runtime-packages-<os>-<arch>-<python>
-#   artifact. The build scripts fetch and sha256-verify every input
+#   artifact. The boot smoke's compute-floor gate is runner-class-relative
+#   (tebako#1095's follow-up): a sibling step pair first provisions the
+#   on-system reference python (setup-python at the leg's base version)
+#   and times tools/compute_reference_probe.py on THIS runner — the
+#   per-call-rate ratio's denominator. The build scripts fetch and
+#   sha256-verify every input
 #   themselves (the pinned source tarball, the pinned link unit, the tfs
 #   CLI) — there is NO source-build path for the driver stack here
 #   (contract.yml's link_unit_release comment), so the ruby factory's
@@ -685,16 +690,63 @@ jobs:
           ci/check_symbol_provenance.sh --exe \
             "runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}.exe"
 
+      # --- the compute-floor ratio gate's on-system reference ---------
+      # The boot smoke's compute-floor tripwire is runner-class-relative
+      # (tools/boot_smoke's header — tebako#1095's closing verdict
+      # falsified the fleet-calibrated absolute ceiling: python.org's own
+      # build reads 4.26-6.66 s fib(35) on the current macos-15-intel
+      # class, where the tebako pair reads 4.270 s against the
+      # reference's 4.258 s — parity ≈1.00): each leg gates its fib(35)
+      # best-of-3 as a per-call-rate ratio against an on-system reference
+      # measured HERE, on the leg's own runner — setup-python at the
+      # leg's base version (the covenant's on-system provisioner; a jit
+      # leg's reference is the plain interpreter — the flavor is a build
+      # flag) timing tools/compute_reference_probe.py (fib(30) best-of-3,
+      # in-interpreter). The container legs measure on the ubuntu host —
+      # the container shares the host's silicon. A loudly skipped windows
+      # leg (the rc-107 carve-out above) measures nothing.
+      - name: Provision the on-system reference python (the compute-floor ratio gate)
+        if: ${{ matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true' }}
+        id: refpy
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0 (the covenant's pin — the same provisioner, tebako#1095's reference arm)
+        with:
+          python-version: ${{ matrix.reference_python }}
+
+      - name: Measure the on-system compute reference (fib(30) best-of-3)
+        if: ${{ matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true' }}
+        id: computeref
+        shell: bash
+        run: |
+          set -euo pipefail
+          py=python3
+          command -v python3 >/dev/null 2>&1 || py=python
+          probe_out=$("$py" tools/compute_reference_probe.py)
+          echo "$probe_out"
+          best=$(awk '/^best: /{print $2}' <<< "$probe_out")
+          n=$(awk '/^n: /{print $2}' <<< "$probe_out")
+          if [ -z "$best" ] || [ -z "$n" ]; then
+            echo "::error::the reference probe emitted no best:/n: lines — the ratio gate has no denominator"
+            exit 1
+          fi
+          echo "ref_seconds=$best" >> "$GITHUB_OUTPUT"
+          echo "ref_n=$n" >> "$GITHUB_OUTPUT"
+
       # The boot smoke self-selects the scenario set per platform (the
       # POSIX set vs the windows bare + named-error trio) and resolves the
       # exe from TEBAKO_RUNTIME_ROOT. TEBAKO_TFS names the tfs CLI the
       # build fetched (the fixture-image scenarios pack with it) — inside
       # the container legs it is the musl/gnu binary matching the image.
+      # COMPUTE_FLOOR_REFERENCE_SECONDS/N are the sibling step's same-leg
+      # on-system measurement (the ratio gate's denominator — above).
       - name: Boot smoke (container legs)
         if: matrix.container != null
+        env:
+          COMPUTE_FLOOR_REFERENCE_SECONDS: ${{ steps.computeref.outputs.ref_seconds }}
+          COMPUTE_FLOOR_REFERENCE_N: ${{ steps.computeref.outputs.ref_n }}
         run: |
           set -euo pipefail
           docker run --rm -v "${{ github.workspace }}:/mnt/w" -w /mnt/w \
+            -e COMPUTE_FLOOR_REFERENCE_SECONDS -e COMPUTE_FLOOR_REFERENCE_N \
             "${{ matrix.container }}" bash -c '
               set -e
               export TEBAKO_RUNTIME_ROOT=runtime-packages
@@ -706,14 +758,21 @@ jobs:
         if: matrix.os == 'macos'
         env:
           TEBAKO_RUNTIME_ROOT: runtime-packages
-          # The compute-floor carve-out (tebako-runtime-python#79): the
-          # x86_64 legs carry the LIVE ~3x slow-compute defect on real
-          # Intel silicon (fib(35) 4.0-5.7 s vs the healthy 1.1-1.5 s,
-          # run 44910482094) whose root cause is the product repo's
-          # (tebako#1095) — warn-only there so the factory stays green
-          # while the fix ships; every other leg keeps the fail-closed
+          # The ratio gate's denominator: the sibling step's same-leg
+          # on-system measurement (above).
+          COMPUTE_FLOOR_REFERENCE_SECONDS: ${{ steps.computeref.outputs.ref_seconds }}
+          COMPUTE_FLOOR_REFERENCE_N: ${{ steps.computeref.outputs.ref_n }}
+          # The compute-floor warn tier (tebako-runtime-python#79): the
+          # macos-x86_64 legs ride warn-only as insurance while the
+          # runner-class-relative ratio gate proves itself — this is the
+          # fleet class whose move falsified the old absolute ceiling
+          # (tebako#1095's verdict: parity ≈1.00 against the same-leg
+          # on-system reference). Every other leg keeps the fail-closed
           # default (tools/boot_smoke's COMPUTE_FLOOR_MODE contract).
-          # REMOVAL CONDITION: delete this line when tebako#1095 closes.
+          # REMOVAL CONDITION: revert the x86_64 legs to fail-closed
+          # (delete this line) once the ratio gate reads green on two
+          # consecutive runs on the current fleet — the gate's own
+          # per-call-ratio log lines are the evidence.
           COMPUTE_FLOOR_MODE: ${{ matrix.arch == 'x86_64' && 'warn' || 'fail' }}
         run: |
           set -euo pipefail
@@ -726,6 +785,9 @@ jobs:
         shell: msys2 {0}
         env:
           TEBAKO_RUNTIME_ROOT: runtime-packages
+          # The ratio gate's denominator (the sibling step, above).
+          COMPUTE_FLOOR_REFERENCE_SECONDS: ${{ steps.computeref.outputs.ref_seconds }}
+          COMPUTE_FLOOR_REFERENCE_N: ${{ steps.computeref.outputs.ref_n }}
         run: |
           set -euo pipefail
           TEBAKO_TFS=$(echo .build/downloads/tfs/*/tfs-*)

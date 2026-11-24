@@ -63,6 +63,15 @@
 #                                 the build re-verifies it against the
 #                                 extracted source's Tools/jit/_llvm.py
 #                                 (the parity arm — PythonBuild's gate)
+#   reference_python            — the on-system reference interpreter's
+#                                 version for the compute-floor ratio
+#                                 gate's sibling step (the line's
+#                                 base_version — a jit leg's reference is
+#                                 the PLAIN interpreter of the same
+#                                 version; the flavor is a build flag).
+#                                 PythonVersion owns the -jit grammar, so
+#                                 this flow replaces any workflow-side
+#                                 suffix strip (ecosystem SSOT invariant).
 #   container                   — the tpkg-builder image ref with
 #                                 contract.yml's container_version tag
 #                                 applied, null for the runner-native legs
@@ -306,6 +315,7 @@ env.each do |row|
       # platform is the runner's, never the artifact's.
       sign_tool_host_id: (os == "linux-musl" ? "linux-gnu-#{arch}" : host_id),
       jit_llvm: line.jit? ? line.jit_llvm_major.to_s : "",
+      reference_python: line.base_version,
       container: container,
       link_unit_pid: LINK_UNIT_PID.fetch([os, arch])
     }

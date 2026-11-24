@@ -67,27 +67,45 @@
 #                        the pair runs a fixed pure-compute loop (fib(35),
 #                        no I/O in the loop) timed INSIDE the interpreter
 #                        (time.perf_counter, best of three — boot/mount
-#                        cost and one-off scheduling noise are excluded),
-#                        and the best run must land under a generous
-#                        ceiling. The ceiling is a regression tripwire,
-#                        never a benchmark (the covenant owns the honest
-#                        tax): healthy legs measured ≈1.1-1.5 s worst-case
-#                        across the matrix (covenant run 44204925939's
-#                        fib(40) rates, rescaled), and the defective
-#                        macos-x86_64 leg's fib(40) ≈54-67 s (covenant run
-#                        42525964214) rescales to ≈4.8 s at this N —
-#                        4.0 s separates them with headroom both ways.
-#                        The measured times print unconditionally, so a
-#                        green leg's rate lives in the log. Modes
-#                        (COMPUTE_FLOOR_MODE): "fail" (the default) trips
-#                        the leg; "warn" — armed by the workflow on the
-#                        macos-x86_64 legs ALONE, where the defect is
-#                        LIVE on real Intel silicon (fib(35) 4.0-5.7 s
-#                        across the catalog, run 44910482094) while the
-#                        root cause ships in the product repo
-#                        (tebako#1095) — prints a ::warning:: and keeps
-#                        the leg green. REMOVAL CONDITION: those legs
-#                        revert to fail-closed when tebako#1095 closes.
+#                        cost and one-off scheduling noise are excluded).
+#                        The gate is RUNNER-CLASS-RELATIVE, never an
+#                        absolute seconds ceiling: tebako#1095's closing
+#                        verdict showed the old fleet-calibrated 4.0 s
+#                        ceiling is unachievable on the current
+#                        macos-15-intel class by ANY x86_64 CPython —
+#                        python.org's own build reads 4.26-6.66 s there
+#                        (runs 45324096740/45330380303/45338794570), with
+#                        the tebako pair at parity (4.270 s vs the
+#                        reference's 4.258 s, ratio ≈ 1.00). The reference
+#                        is measured SAME-LEG: the workflow provisions the
+#                        on-system python (actions/setup-python at the
+#                        leg's base version — the covenant's on-system
+#                        provisioner) as a sibling step and times
+#                        tools/compute_reference_probe.py (fib(30)
+#                        best-of-3, the same shape at a smaller N),
+#                        handing the measurement down as
+#                        COMPUTE_FLOOR_REFERENCE_SECONDS /
+#                        COMPUTE_FLOOR_REFERENCE_N. The recursive fib's
+#                        call count is exact per N (T(n) = 2*F(n+1) - 1),
+#                        so the two Ns normalize to per-call rates and the
+#                        ratio is a property of the built interpreter
+#                        against the reference on THIS runner — a fleet
+#                        move shifts both arms together. The gate: ratio
+#                        <= 1.5x (a regression tripwire, never a
+#                        benchmark — the covenant owns the honest tax).
+#                        The measured times and the ratio print
+#                        unconditionally, so a green leg's rate lives in
+#                        the log. Modes (COMPUTE_FLOOR_MODE): "fail" (the
+#                        default) trips the leg; "warn" — armed by the
+#                        workflow on the macos-x86_64 legs ALONE, the
+#                        fleet class the stale-ceiling false-reds landed
+#                        on — prints a ::warning:: and keeps the leg
+#                        green while the ratio gate proves itself.
+#                        REMOVAL CONDITION: those legs revert to
+#                        fail-closed once the ratio gate reads green on
+#                        two consecutive runs on the current fleet (the
+#                        gate's own output is the evidence; the stale
+#                        absolute ceiling is gone, never reinstated).
 #                        The flags arm is fail-closed in every mode (a
 #                        mis-flagged build is a recipe bug, not this
 #                        defect class).                          [all]
@@ -220,13 +238,16 @@ MATERIALIZE_BOOT_TIMEOUT = 300
 # or pathological one.
 SOCKET_PROBE_TIMEOUT = 120
 # The compute-floor scenario (the header's tebako-runtime-python#79
-# block): fib(COMPUTE_FIB_N) inner-timed, best of COMPUTE_FIB_RUNS. The
-# ceiling carries ~3x headroom over the healthy matrix's measured worst
-# leg and still catches the #79 defect class (≈4.8 s at this N); a named
-# failure, never a flake-shape benchmark bound.
+# block): fib(COMPUTE_FIB_N) inner-timed, best of COMPUTE_FIB_RUNS,
+# gated as a per-call-rate RATIO against the same-leg on-system
+# reference — never an absolute seconds ceiling (the header block's
+# runner-class math; tebako#1095's verdict exonerated every tebako
+# layer and falsified the fleet-calibrated 4.0 s ceiling the current
+# macos-15-intel class moved past). A named failure, never a
+# flake-shape benchmark bound.
 COMPUTE_FIB_N = 35
 COMPUTE_FIB_RUNS = 3
-COMPUTE_FLOOR_SECONDS = 4.0
+COMPUTE_FLOOR_MAX_RATIO = 1.5
 IMAGE_SUFFIXES = %w[.tfs .dwarfs].freeze
 MARKER_SUFFIXES = %w[.abi .sha256 .origin .yaml .dll].freeze
 NON_EXECUTABLE_SUFFIXES = (IMAGE_SUFFIXES + MARKER_SUFFIXES).freeze
@@ -248,13 +269,16 @@ end
 
 # The compute-floor scenario's mode (its header block): "fail" — the
 # default, and every leg's shape but one — trips the leg on a breached
-# floor; "warn" prints the measurement + a workflow-command ::warning::
+# ratio; "warn" prints the measurement + a workflow-command ::warning::
 # and keeps the leg green. The workflow arms "warn" on the macos-x86_64
-# legs ALONE: the live tebako-runtime-python#79 slow-compute defect
-# (root cause tebako#1095, the product repo's) would otherwise red every
-# factory run until the fix ships. REMOVAL CONDITION: those legs revert
-# to fail-closed when tebako#1095 closes. Any other value is a named
-# error, never a silent fallback.
+# legs ALONE: that is the fleet class the stale absolute ceiling
+# false-red on every leg after the runner-class move (tebako#1095's
+# verdict exonerated the runtime — parity ≈1.00 against the same-leg
+# on-system reference), and the warn tier rides as insurance while the
+# ratio gate proves itself. REMOVAL CONDITION: those legs revert to
+# fail-closed once the ratio gate reads green on two consecutive runs
+# on the current fleet. Any other value is a named error, never a
+# silent fallback.
 COMPUTE_FLOOR_MODE = ENV.fetch("COMPUTE_FLOOR_MODE", "fail")
 unless %w[fail warn].include?(COMPUTE_FLOOR_MODE)
   usage_error("COMPUTE_FLOOR_MODE=#{COMPUTE_FLOOR_MODE.inspect} — known: fail (the default), warn")
@@ -505,6 +529,18 @@ def windows_system_path
   "#{root}\\System32;#{root};#{root}\\System32\\Wbem"
 end
 
+# The naive recursive fib's exact call count — T(n) = 2*F(n+1) - 1
+# (T(0) = T(1) = 1, T(n) = 1 + T(n-1) + T(n-2)). The compute-floor gate
+# divides each arm's best by its probe's call count, so the tebako arm's
+# fib(35) and the reference arm's fib(30) compare as per-call rates and
+# the ratio is a property of the interpreter on the runner class, never
+# of the workload sizes.
+def fib_calls(n)
+  a, b = 0, 1
+  (n + 1).times { a, b = b, a + b }
+  2 * a - 1
+end
+
 KNOWN_SCENARIOS = %w[bare boot payload entrypoint bad-mount materialize-boot alias-closure socket-timeout
                      mp-spawn e-flag mount-root-override mount-root-malformed override-ungranted jit
                      compute-floor].freeze
@@ -598,8 +634,9 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
         # call-dominated (fib — the covenant's steady.cpu shape) and timed
         # INSIDE the interpreter (time.perf_counter around each run): the
         # boot/mount cost and the harness never enter the measurement, and
-        # best-of-N drops one-off scheduling noise. The ceiling is a
-        # tripwire, not a benchmark — the covenant owns the honest ratio.
+        # best-of-N drops one-off scheduling noise. The gate is a same-leg
+        # per-call-rate ratio against the on-system reference, not a
+        # benchmark — the covenant owns the honest tax.
         # The flags arm pins the hypothesis class itself: a -O0/-Og/debug
         # build is named outright, before the clock ever runs.
         unless File.file?(image)
@@ -639,19 +676,47 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
               "build ships a slow interpreter green under a boot-only gate (tebako-runtime-python#79)")
         puts "     compute-floor: fib(#{COMPUTE_FIB_N}) #{out[/^runs: (.+)$/, 1]}"
         best = out[/^best: (\d+(?:\.\d+)?)$/, 1]&.to_f
-        floor = "compute-floor: fib(#{COMPUTE_FIB_N}) best-of-#{COMPUTE_FIB_RUNS} under #{COMPUTE_FLOOR_SECONDS}s"
-        detail = "measured best #{best.inspect}s (runs in the log above) — a leg computing at a fraction " \
-                 "of the matrix's rate is a slow BUILD, never a publishable artifact " \
+        # The same-leg on-system reference (the header block): the
+        # workflow's sibling step times tools/compute_reference_probe.py
+        # under setup-python at the leg's base version on THIS runner and
+        # hands the measurement down. Missing or malformed is a WIRING
+        # failure — named here, never a silently degraded gate; a local
+        # run gets the exact remediation.
+        ref_seconds = ENV.fetch("COMPUTE_FLOOR_REFERENCE_SECONDS", nil).to_s
+        ref_n = ENV.fetch("COMPUTE_FLOOR_REFERENCE_N", nil).to_s
+        unless ref_seconds.match?(/\A\d+(?:\.\d+)?\z/) && ref_seconds.to_f.positive? &&
+               ref_n.match?(/\A\d+\z/) && ref_n.to_i.positive?
+          check("compute-floor: the same-leg on-system reference rides the env", false,
+                "COMPUTE_FLOOR_REFERENCE_SECONDS=#{ref_seconds.inspect} " \
+                "COMPUTE_FLOOR_REFERENCE_N=#{ref_n.inspect} — the ratio gate needs the sibling " \
+                "step's measurement on this runner; locally: python3 tools/compute_reference_probe.py, " \
+                "then export both vars off its best:/n: lines")
+          next
+        end
+        reference = ref_seconds.to_f
+        reference_n = ref_n.to_i
+        ratio = best.nil? ? nil : (best / fib_calls(COMPUTE_FIB_N)) / (reference / fib_calls(reference_n))
+        ratio_text = ratio.nil? ? "n/a" : format("%.3f", ratio)
+        puts "     compute-floor: reference fib(#{reference_n}) best #{reference}s on-system — " \
+             "per-call ratio #{ratio_text} (limit #{COMPUTE_FLOOR_MAX_RATIO}x)"
+        floor = "compute-floor: per-call rate within #{COMPUTE_FLOOR_MAX_RATIO}x the same-leg " \
+                "on-system reference"
+        detail = "fib(#{COMPUTE_FIB_N}) best #{best.inspect}s vs the reference's fib(#{reference_n}) " \
+                 "best #{reference}s (runs in the log above) — per-call ratio #{ratio_text}, limit " \
+                 "#{COMPUTE_FLOOR_MAX_RATIO}x; a leg computing at a fraction of the reference's rate " \
+                 "is a slow BUILD, never a publishable artifact " \
                  "(tebako-runtime-python#79)\nstdout: #{out}\nstderr: #{err}"
-        if best.nil? || best > COMPUTE_FLOOR_SECONDS
+        if ratio.nil? || ratio > COMPUTE_FLOOR_MAX_RATIO
           if COMPUTE_FLOOR_MODE == "warn"
             # The warn tier (the header block + the mode comment): the
-            # defect is LIVE on this leg's class, the root cause is the
-            # product repo's — the measurement and a workflow-command
-            # warning carry it, the leg stays green.
-            puts "::warning title=compute-floor::fib(#{COMPUTE_FIB_N}) best #{best.inspect}s past the " \
-                 "#{COMPUTE_FLOOR_SECONDS}s tripwire — the live tebako-runtime-python#79 slow-build defect " \
-                 "(root cause tebako#1095); this leg rides warn-only until tebako#1095 closes"
+            # stale-ceiling false-red class lives on this leg's fleet —
+            # the measurement and a workflow-command warning carry a
+            # breach, the leg stays green while the ratio gate proves
+            # itself on the current fleet.
+            puts "::warning title=compute-floor::fib(#{COMPUTE_FIB_N}) best #{best.inspect}s at " \
+                 "#{ratio_text}x the same-leg on-system reference (limit #{COMPUTE_FLOOR_MAX_RATIO}x) — " \
+                 "the tebako-runtime-python#79 slow-build class; this leg rides warn-only until the " \
+                 "ratio gate reads green on two consecutive runs"
             puts "warn #{floor}: #{detail}"
           else
             check(floor, false, detail)
