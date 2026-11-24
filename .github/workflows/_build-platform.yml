@@ -388,6 +388,20 @@ jobs:
               uid=$(stat -c %u /mnt/w/contract.yml); gid=$(stat -c %g /mnt/w/contract.yml)
               chown -R "$uid:$gid" /mnt/w/.build /mnt/w/runtime-packages 2>/dev/null || true'
 
+      # EXPERIMENT (tebako#1095 follow-up): pin the toolchain to Xcode
+      # 16.3 — the DEVELOPER_DIR override is inert for autotools (cc
+      # resolves via PATH/xcode-select), so the experiment pins with
+      # xcode-select and fails loudly if the image lacks 16.3.
+      - name: EXPERIMENT pin the toolchain to Xcode 16.3 (macos)
+        if: matrix.os == 'macos' && matrix.arch == 'arm64'
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode* | sed 's/^/image carries: /'
+          XCODE_163=$(ls -d /Applications/Xcode*16.3*.app 2>/dev/null | head -1)
+          [ -n "$XCODE_163" ] || { echo "::error::no Xcode 16.3 on this image (see the inventory above)"; exit 1; }
+          sudo xcode-select -s "$XCODE_163/Contents/Developer"
+          cc --version
+
       - name: Build the runtime (macos)
         if: matrix.os == 'macos'
         run: tools/build_runtime --python "${{ matrix.python }}"
