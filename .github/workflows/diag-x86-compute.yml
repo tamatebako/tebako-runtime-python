@@ -1,0 +1,293 @@
+# Copyright (c) 2026 [Ribose Inc](https://www.ribose.com).
+# All rights reserved.
+# This file is a part of tamatebako
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+# TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS
+# BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+# DIAGNOSTIC ONLY (tebako#1095) — workflow_dispatch on a scratch branch;
+# nothing here builds, publishes, or releases. Downloads the PUBLISHED
+# macos-x86_64 python pairs of three link-unit eras (v0.2.0 = v2.3.2,
+# healthy; v0.3.0 = v2.8.49, mid-window; v0.3.5 = v2.8.78, defective) on a
+# real macos-15-intel runner and measures the pure-compute shape
+# (fib(35), in-interpreter wall + user/sys CPU decomposition + context
+# switches) in four activations of the same exe:
+#
+#   bare   — PYTHONHOME=<host-extracted image tree>: no TEBAKO_* env, no
+#            mount, no re-exec, no shim. The "same exe, zero tebako
+#            runtime" control.
+#   inert  — bare + DYLD_INSERT_LIBRARIES=<the image's own
+#            libtfs_preload.dylib> with NO TEBAKO_TFS_MOUNTS: the shim is
+#            interposed but contractually inert. Separates "dyld
+#            interpose present on Intel" from "engine mounted".
+#   tebako — TEBAKO_RUNTIME_IMAGE=<the .tfs>: the defect shape (mount +
+#            re-exec + live shim serving the stdlib from the VFS).
+#   sys    — the runner's /usr/bin/python3, the machine baseline.
+#
+# The wall-vs-CPU decomposition inside the interpreter is the decisive
+# cut: wall ~= cpu => on-CPU (the exe's own code path runs slow on real
+# Intel); wall >> cpu with involuntary context switches => a competing
+# thread/scheduler interaction; wall >> cpu with voluntary switches =>
+# blocking syscalls (fs_usage/dtruss then name them). External probes
+# (ps -M thread list, thread-count sampler, sample(1) stacks, dtruss
+# syscall counts with fs_usage fallback) attach to the defective shape's
+# run. All probe output is cat'd into the log AND uploaded as an
+# artifact.
+
+name: diag-x86-compute
+
+on:
+  workflow_dispatch:
+    inputs:
+      pyver:
+        description: 'Python version to probe (a non-jit catalog version)'
+        type: string
+        default: '3.14.7'
+      fibn:
+        description: 'fib N for the timed matrix (35 matches the compute-floor tripwire)'
+        type: string
+        default: '35'
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      PYVER: ${{ inputs.pyver }}
+      FIBN: ${{ inputs.fibn }}
+      WORK: ${{ runner.workspace }}/diag-1095
+    steps:
+      - name: Host facts
+        run: |
+          set -x
+          uname -a
+          arch
+          sysctl -n machdep.cpu.brand_string hw.model hw.ncpu hw.physicalcpu hw.logicalcpu kern.osversion
+          pmset -g thermlog | tail -8 || true
+          sudo -n true && echo "sudo: passwordless" || echo "sudo: unavailable"
+          /usr/bin/python3 --version || true
+
+      - name: Download + verify the published pairs (three eras)
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORK" && cd "$WORK"
+          base=https://github.com/tamatebako/tebako-runtime-python/releases/download
+          for era in v0.2.0 v0.3.0 v0.3.5; do
+            case $era in
+              v0.2.0) name="tebako-runtime-0.2.0-${PYVER}-macos-x86_64" ;;
+              *)      name="tebako-runtime-${era#v}-python-${PYVER}-macos-x86_64" ;;
+            esac
+            mkdir -p "$era"
+            (
+              cd "$era"
+              curl -fL --retry 3 --retry-delay 2 -sS -o exe        "$base/$era/$name"
+              curl -fL --retry 3 --retry-delay 2 -sS -o exe.sha256 "$base/$era/$name.sha256"
+              curl -fL --retry 3 --retry-delay 2 -sS -o env.tfs        "$base/$era/$name.tfs"
+              curl -fL --retry 3 --retry-delay 2 -sS -o env.tfs.sha256 "$base/$era/$name.tfs.sha256"
+              e=$(awk '{print $1}' exe.sha256); a=$(shasum -a 256 exe | awk '{print $1}')
+              [ "$e" = "$a" ] || { echo "::error::exe sha256 mismatch $era: $e vs $a"; exit 1; }
+              echo "verified $era exe ($a)"
+              e=$(awk '{print $1}' env.tfs.sha256); a=$(shasum -a 256 env.tfs | awk '{print $1}')
+              [ "$e" = "$a" ] || { echo "::error::tfs sha256 mismatch $era: $e vs $a"; exit 1; }
+              echo "verified $era tfs ($a)"
+              chmod +x exe
+              ls -la
+            )
+          done
+
+      - name: Fetch the tfs CLI (tebako v2.8.83) + extract the env images to host trees
+        run: |
+          set -euo pipefail
+          cd "$WORK"
+          base=https://github.com/tamatebako/tebako/releases/download/v2.8.83
+          curl -fL --retry 3 -sS -o tfs "$base/tfs-2.8.83-macos-x86_64"
+          curl -fL --retry 3 -sS -o tfs.sha256 "$base/tfs-2.8.83-macos-x86_64.sha256"
+          e=$(awk '{print $1}' tfs.sha256); a=$(shasum -a 256 tfs | awk '{print $1}')
+          [ "$e" = "$a" ] || { echo "::error::tfs CLI sha256 mismatch"; exit 1; }
+          chmod +x tfs
+          ./tfs --version || true
+          for era in v0.2.0 v0.3.0 v0.3.5; do
+            mkdir -p "$era/root"
+            ./tfs extract -q -d "$era/root" "$era/env.tfs"
+            echo "== $era tree:"; ls "$era/root" "$era/root/lib" | head -12
+            ls "$era/root/lib/tebako" 2>/dev/null || true
+          done
+
+      - name: The probe script (in-interpreter decomposition)
+        run: |
+          set -euo pipefail
+          cat > "$WORK/probe.py" <<'PROBE_EOF'
+          import os, resource, sys, threading, time
+          N = int(os.environ.get("PROBE_FIB_N", "35"))
+          def fib(n):
+              return n if n < 2 else fib(n - 1) + fib(n - 2)
+          def one():
+              r0 = resource.getrusage(resource.RUSAGE_SELF)
+              t0 = os.times()
+              w0 = time.perf_counter()
+              fib(N)
+              w = time.perf_counter() - w0
+              t1 = os.times()
+              r1 = resource.getrusage(resource.RUSAGE_SELF)
+              return (w, t1.user - t0.user, t1.system - t0.system,
+                      r1.ru_nvcsw - r0.ru_nvcsw, r1.ru_nivcsw - r0.ru_nivcsw)
+          print("probe-py: version", sys.version.split()[0])
+          print("probe-py: executable", sys.executable)
+          print("probe-py: prefix", sys.prefix, "| base", sys.base_prefix)
+          print("probe-py: threads", threading.active_count(),
+                [t.name for t in threading.enumerate()])
+          print("probe-py: switchinterval", sys.getswitchinterval())
+          print("probe-py: env", {k: v for k, v in os.environ.items()
+                                  if k.startswith(("TEBAKO", "DYLD", "PYTHON", "LD_"))})
+          fib(10)
+          runs = [one() for _ in range(3)]
+          for w, u, s, nv, niv in runs:
+              print(f"run: wall={w:.3f} user={u:.3f} sys={s:.3f} "
+                    f"nvcsw={nv} nivcsw={niv}")
+          print("best-wall: %.3f" % min(r[0] for r in runs))
+          print("best-user: %.3f" % min(r[1] for r in runs))
+          print("PROBE-DONE")
+          PROBE_EOF
+          /usr/bin/python3 -c "import ast; ast.parse(open('$WORK/probe.py').read())" && echo "probe.py parses"
+          cat "$WORK/probe.py"
+
+      - name: Baseline — system python
+        run: |
+          cd "$WORK"
+          env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN /usr/bin/python3 probe.py \
+            || echo "(system python unavailable — skipped)"
+
+      - name: "Shape A (bare control) — all eras: same exe, host stdlib, no tebako runtime"
+        run: |
+          set -uo pipefail
+          cd "$WORK"
+          rc=0
+          for era in v0.2.0 v0.3.0 v0.3.5; do
+            echo "############ bare $era"
+            env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+              PYTHONHOME="$WORK/$era/root" \
+              "$WORK/$era/exe" probe.py || { echo "::warning::bare $era rc=$?"; rc=1; }
+          done
+          exit $rc
+
+      - name: "Shape I (inert shim) — v0.3.5: interposed but mountless"
+        run: |
+          set -euo pipefail
+          cd "$WORK"
+          shim="$WORK/v0.3.5/root/lib/tebako/libtfs_preload.dylib"
+          [ -f "$shim" ] || { echo "::error::no shim at $shim"; exit 1; }
+          env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+            PYTHONHOME="$WORK/v0.3.5/root" \
+            DYLD_INSERT_LIBRARIES="$shim" \
+            "$WORK/v0.3.5/exe" probe.py
+
+      - name: Shape B (tebako boot — the defect shape) — all eras
+        run: |
+          set -uo pipefail
+          cd "$WORK"
+          rc=0
+          for era in v0.2.0 v0.3.0 v0.3.5; do
+            echo "############ tebako $era"
+            env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+              TEBAKO_RUNTIME_IMAGE="$WORK/$era/env.tfs" \
+              "$WORK/$era/exe" probe.py || { echo "::warning::tebako $era rc=$?"; rc=1; }
+          done
+          exit $rc
+
+      - name: External probes on the defective shape (v0.3.5 tebako boot)
+        run: |
+          set -uo pipefail
+          cd "$WORK"
+          mkdir -p ext
+          env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+            TEBAKO_RUNTIME_IMAGE="$WORK/v0.3.5/env.tfs" \
+            "$WORK/v0.3.5/exe" probe.py > ext/B.log 2>&1 &
+          pid=$!
+          echo "observing pid $pid"
+          sleep 2
+          if kill -0 $pid 2>/dev/null; then
+            echo "===== ps -M (thread list)"; ps -M -p $pid || true
+            echo "===== ps state"; ps -o pid,ppid,%cpu,%mem,state,time,comm -p $pid || true
+            echo "===== thread-count sampler (12 x 0.5s)"
+            for i in $(seq 1 12); do
+              kill -0 $pid 2>/dev/null || break
+              th=$(ps -M -p $pid 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
+              cput=$(ps -o time= -p $pid 2>/dev/null | tr -d ' ')
+              echo "t=${i} threads=${th} cputime=${cput}"
+              sleep 0.5
+            done
+            echo "===== sample 5s"; sample $pid 5 -file ext/sample.txt 2>&1 || true
+            echo "===== dtruss (syscall counts; tolerate SIP refusal)"
+            if sudo -n true 2>/dev/null; then
+              sudo dtruss -c -p $pid > ext/dtruss.txt 2>&1 &
+              dt=$!
+              sleep 1
+              if ! kill -0 $dt 2>/dev/null; then
+                echo "(dtruss died immediately — the SIP shape; fs_usage fallback)"
+                ( sudo fs_usage -w -f filesys $pid > ext/fs_usage.txt 2>&1 & \
+                  fsp=$!; sleep 6; sudo kill $fsp 2>/dev/null ) || true
+              fi
+            fi
+            wait $pid; echo "probe process rc=$?"
+            sleep 2
+            [ -s ext/dtruss.txt ] && { echo "===== dtruss counts"; cat ext/dtruss.txt; }
+          else
+            echo "probe already exited — the shape was FAST (healthy)"; cat ext/B.log
+          fi
+          echo "===== B.log"; cat ext/B.log
+          echo "===== sample (head)"; head -140 ext/sample.txt 2>/dev/null || true
+          if [ -s ext/fs_usage.txt ]; then
+            echo "===== fs_usage per-call counts"
+            awk '{print $2}' ext/fs_usage.txt | sort | uniq -c | sort -rn | head -25
+          fi
+
+      - name: External probes on the healthy era (v0.2.0 tebako boot) — the control
+        run: |
+          set -uo pipefail
+          cd "$WORK"
+          mkdir -p ext
+          env -i PATH=/usr/bin:/bin HOME="$HOME" PROBE_FIB_N=$FIBN \
+            TEBAKO_RUNTIME_IMAGE="$WORK/v0.2.0/env.tfs" \
+            "$WORK/v0.2.0/exe" probe.py > ext/B020.log 2>&1 &
+          pid=$!
+          sleep 2
+          if kill -0 $pid 2>/dev/null; then
+            echo "===== ps -M (thread list)"; ps -M -p $pid || true
+            ps -o pid,%cpu,state,time,comm -p $pid || true
+            sample $pid 5 -file ext/sample020.txt 2>&1 || true
+            wait $pid; echo "rc=$?"
+            head -80 ext/sample020.txt 2>/dev/null || true
+          else
+            echo "probe already exited (fast is the healthy signature)"
+          fi
+          echo "===== B020.log"; cat ext/B020.log
+
+      - name: Upload the probe outputs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: diag-1095-probes
+          path: |
+            ${{ runner.workspace }}/diag-1095/ext/
+            ${{ runner.workspace }}/diag-1095/probe.py
+          if-no-files-found: ignore
