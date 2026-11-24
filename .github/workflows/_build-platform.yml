@@ -822,9 +822,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          fresh=$(find runtime-packages -maxdepth 1 -name 'tebako-runtime-*' -type f \
-                    ! -name '*.tfs' ! -name '*.sha256' ! -name '*.json' ! -name '*.blksum.json' \
-                    ! -name '*.yaml' | head -1)
+          fresh="runtime-packages/tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"
+          test -x "$fresh" || { echo "::error::interleaved probe: no executable at $fresh"; exit 1; }
           fresh_img="${fresh%.exe}.tfs"
           ver="${{ matrix.python }}"
           base="tebako-runtime-0.3.3-python-${ver}-macos-arm64"
