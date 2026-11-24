@@ -475,11 +475,16 @@ platform ships).
   reports the JIT capability under `PYTHON_JIT=1`, a plain line reports
   its absence), the `compute-floor` tripwire (a slow BUILD ships green
   under a boot-only gate — tebako-runtime-python#79; the leg times a
-  fixed pure-compute loop inside the interpreter and fails past a
-  generous ceiling — fail-closed everywhere except the macos-x86_64
-  legs, which ride warn-only via `COMPUTE_FLOOR_MODE=warn` while the
-  live defect's root cause ships in the product repo, tebako#1095, and
-  revert to fail-closed once it closes), and on windows the
+  fixed pure-compute loop inside the interpreter and gates it as a
+  per-call-rate ratio (≤1.5x) against a same-leg on-system reference —
+  the workflow's sibling step provisions setup-python at the leg's base
+  version and times `tools/compute_reference_probe.py` (fib(30)
+  best-of-3) on the same runner; tebako#1095's verdict falsified the
+  old absolute ceiling, which no x86_64 CPython meets on the current
+  macos-15-intel class — fail-closed everywhere except the macos-x86_64
+  legs, which ride warn-only via `COMPUTE_FLOOR_MODE=warn` as insurance
+  while the ratio gate proves itself, reverting to fail-closed after
+  two consecutive green runs on the current fleet), and on windows the
   `alias-closure` self-containment
   proof (static-import-only pair, the image's declared PE closure, and
   every boot under a PATH scrubbed to the Windows system directories)
