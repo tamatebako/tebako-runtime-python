@@ -15,28 +15,40 @@
 # verdict); the per-call-rate ratio against a same-leg reference is the
 # honest gate.
 #
-# The workload is the boot smoke's own shape at a smaller N (fib(30)
-# best-of-3, timed INSIDE the interpreter — provisioning, interpreter
-# startup, and the harness never enter the measurement, and best-of-N
-# drops one-off scheduling noise). The recursive fib's call count is an
-# exact constant per N (T(n) = 2*F(n+1) - 1), so the boot smoke
-# normalizes the two Ns to per-call rates before comparing — the ratio
-# is a property of the built interpreter against the reference on the
-# SAME runner class, never of the fleet's absolute rate.
+# The workload is the boot smoke's own shape at a smaller N (fib(30),
+# timed INSIDE the interpreter — provisioning, interpreter startup, and
+# the harness never enter the measurement). The recursive fib's call
+# count is an exact constant per N (T(n) = 2*F(n+1) - 1), so the boot
+# smoke normalizes the two Ns to per-call rates before comparing — the
+# ratio is a property of the built interpreter against the reference on
+# the SAME runner class, never of the fleet's absolute rate.
+#
+# The statistic is the MEDIAN of 25 runs (best printed for the log):
+# fib(30) is ~0.1 s on a healthy runner, and at that scale a best-of-3
+# MIN samples the runner's instantaneous state instead of measuring its
+# sustained rate — the first full-matrix run (45344792366) false-red two
+# healthy macos-arm64 legs at ratio 1.87/1.95 on reference windows whose
+# own three runs spread 29% (0.090/0.116/0.104), minutes of drift away
+# from the tebako arm's tight seconds-scale window. The covenant's cells
+# gate on medians for the same reason. The tebako arm keeps its fib(35)
+# best-of-3 (tebako#1095's follow-up pins it; at 4.5 s a run
+# self-averages). 25 runs cost ~3 s on the fast class, ~7 s on the slow
+# one — the probe stays tiny.
 #
 # Usage:
 #   python3 tools/compute_reference_probe.py
 #
 # Exit codes: 0 measured · the interpreter's own on any failure.
 
+import statistics
 import sys
 import time
 
 # The reference workload. The workflow's sibling step and tools/boot_smoke
-# read these back off the printed n:/runs: lines — they are this file's
-# to change, in one place.
+# read these back off the printed n:/runs:/median: lines — they are this
+# file's to change, in one place.
 N = 30
-RUNS = 3
+RUNS = 25
 
 
 def fib(n):
@@ -56,6 +68,7 @@ def main():
     print("n:", N)
     print("runs:", " ".join(f"{r:.3f}" for r in runs))
     print("best:", f"{min(runs):.3f}")
+    print("median:", f"{statistics.median(runs):.3f}")
     return 0
 
 
