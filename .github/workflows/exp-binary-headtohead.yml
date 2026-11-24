@@ -23,6 +23,8 @@
 name: exp-binary-headtohead
 
 on:
+  push:
+    branches: [exp/xcode-16.3-arm64]
   workflow_dispatch:
 
 jobs:
