@@ -701,18 +701,33 @@ jobs:
       # measured HERE, on the leg's own runner — setup-python at the
       # leg's base version (the covenant's on-system provisioner; a jit
       # leg's reference is the plain interpreter — the flavor is a build
-      # flag) timing tools/compute_reference_probe.py (fib(30) best-of-3,
-      # in-interpreter). The container legs measure on the ubuntu host —
-      # the container shares the host's silicon. A loudly skipped windows
-      # leg (the rc-107 carve-out above) measures nothing.
+      # flag) timing tools/compute_reference_probe.py (fib(30), the
+      # MEDIAN of 25 runs — at ~0.1 s a run, a best-of-3 min samples the
+      # runner's instantaneous state instead of its sustained rate; the
+      # first full-matrix run false-red two healthy macos-arm64 legs on
+      # exactly that class, run 45344792366). The container legs measure
+      # on the ubuntu host — the container shares the host's silicon. A
+      # loudly skipped windows leg (the rc-107 carve-out above) measures
+      # nothing.
       - name: Provision the on-system reference python (the compute-floor ratio gate)
         if: ${{ matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true' }}
         id: refpy
+        # The manifest can lag the factory's exact micro pins (3.11.16 /
+        # 3.12.14 are not carried — run 45344792366): the LINE step below
+        # is the loud fallback, never a silent skip.
+        continue-on-error: true
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0 (the covenant's pin — the same provisioner, tebako#1095's reference arm)
         with:
           python-version: ${{ matrix.reference_python }}
 
-      - name: Measure the on-system compute reference (fib(30) best-of-3)
+      - name: Provision the reference at the line (the manifest lacks the micro)
+        if: ${{ (matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true') && steps.refpy.outcome == 'failure' }}
+        id: refpyline
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.reference_line }}
+
+      - name: Measure the on-system compute reference (fib(30) median-of-25)
         if: ${{ matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true' }}
         id: computeref
         shell: bash
@@ -720,15 +735,26 @@ jobs:
           set -euo pipefail
           py=python3
           command -v python3 >/dev/null 2>&1 || py=python
-          probe_out=$("$py" tools/compute_reference_probe.py)
-          echo "$probe_out"
-          best=$(awk '/^best: /{print $2}' <<< "$probe_out")
-          n=$(awk '/^n: /{print $2}' <<< "$probe_out")
-          if [ -z "$best" ] || [ -z "$n" ]; then
-            echo "::error::the reference probe emitted no best:/n: lines — the ratio gate has no denominator"
+          if [ "${{ steps.refpy.outcome }}" = "failure" ]; then
+            echo "::notice title=compute-floor reference::setup-python carries no ${{ matrix.reference_python }} — the reference rides the ${{ matrix.reference_line }} line's latest micro (the same interpreter generation)"
+          fi
+          # The generation assertion: whatever the provisioning resolved,
+          # the reference must be the SAME major.minor the leg builds —
+          # anything else is a wiring bug, named, never a quiet ratio.
+          got=$("$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          if [ "$got" != "${{ matrix.reference_line }}" ]; then
+            echo "::error::the reference python is the $got line, expected ${{ matrix.reference_line }} — the provisioning steps resolved the wrong interpreter generation"
             exit 1
           fi
-          echo "ref_seconds=$best" >> "$GITHUB_OUTPUT"
+          probe_out=$("$py" tools/compute_reference_probe.py)
+          echo "$probe_out"
+          median=$(awk '/^median: /{print $2}' <<< "$probe_out")
+          n=$(awk '/^n: /{print $2}' <<< "$probe_out")
+          if [ -z "$median" ] || [ -z "$n" ]; then
+            echo "::error::the reference probe emitted no median:/n: lines — the ratio gate has no denominator"
+            exit 1
+          fi
+          echo "ref_seconds=$median" >> "$GITHUB_OUTPUT"
           echo "ref_n=$n" >> "$GITHUB_OUTPUT"
 
       # The boot smoke self-selects the scenario set per platform (the

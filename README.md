@@ -478,8 +478,8 @@ platform ships).
   fixed pure-compute loop inside the interpreter and gates it as a
   per-call-rate ratio (≤1.5x) against a same-leg on-system reference —
   the workflow's sibling step provisions setup-python at the leg's base
-  version and times `tools/compute_reference_probe.py` (fib(30)
-  best-of-3) on the same runner; tebako#1095's verdict falsified the
+  version and times `tools/compute_reference_probe.py` (fib(30), the
+  median of 25 runs) on the same runner; tebako#1095's verdict falsified the
   old absolute ceiling, which no x86_64 CPython meets on the current
   macos-15-intel class — fail-closed everywhere except the macos-x86_64
   legs, which ride warn-only via `COMPUTE_FLOOR_MODE=warn` as insurance
