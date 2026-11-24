@@ -58,8 +58,8 @@ jobs:
       - name: v0.3.3 binary probe (fib(35) best-of-3, the gate's numerator)
         run: |
           set -euo pipefail
-          TEBAKO_RUNTIME_IMAGE=v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64.tfs \
-            v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64 -c "
+          TEBAKO_RUNTIME_IMAGE="$GITHUB_WORKSPACE/v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64.tfs" \
+            "$GITHUB_WORKSPACE/v033/tebako-runtime-0.3.3-python-3.14.7-macos-arm64" -c "
           import platform, sysconfig, time
           def fib(n):
               return n if n < 2 else fib(n - 1) + fib(n - 2)
