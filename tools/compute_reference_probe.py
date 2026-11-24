@@ -62,8 +62,18 @@ def one():
 
 
 def main():
+    import sysconfig
+
     print("COMPUTE-REFERENCE")
     print("python:", sys.version.split()[0], "at", sys.executable)
+    # The build identity, for the apples-to-apples read against the
+    # factory build's own opt:/CFLAGS report (tools/boot_smoke's compute
+    # probe): a per-call gap that survives a stable window is a BUILD
+    # difference (PGO, the tail-calling interpreter, computed gotos),
+    # and these lines name it in the leg's log.
+    print("configure:", (sysconfig.get_config_var("CONFIGURE_ARGS") or ""))
+    print("opt:", (sysconfig.get_config_var("OPT") or ""),
+          "|", (sysconfig.get_config_var("CFLAGS") or ""))
     runs = [one() for _ in range(RUNS)]
     print("n:", N)
     print("runs:", " ".join(f"{r:.3f}" for r in runs))
