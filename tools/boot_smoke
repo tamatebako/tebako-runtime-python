@@ -665,7 +665,16 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
           print("runs:", " ".join(f"{r:.3f}" for r in runs))
           print("best:", f"{min(runs):.3f}")
         PY
-        out, err, st = boot(executable, ["-c", compute_probe], { "TEBAKO_RUNTIME_IMAGE" => image },
+        # EXPERIMENT exp/xcode-16.3-arm64: the jit flavor stayed at
+        # ratio 1.614 with --with-tail-call-interp=no (PR-leg run
+        # 45365694894) while the plain 3.14 leg returned to 1.353 — the
+        # JIT's stencils are musttail continuation-passing by design
+        # (Tools/jit/README.md), so the flavor either cannot drop the
+        # slow dispatch or pays the JIT's own runtime cost on a
+        # call-heavy loop. PYTHON_JIT=0 on this scratch branch's probe
+        # discriminates: parity with the JIT off convicts the JIT's
+        # runtime, a stubborn 1.6 convicts the jit build's codegen.
+        out, err, st = boot(executable, ["-c", compute_probe], { "TEBAKO_RUNTIME_IMAGE" => image, "PYTHON_JIT" => "0" },
                             timeout: platform.msys? ? MATERIALIZE_BOOT_TIMEOUT : BOOT_TIMEOUT)
         expect_ok("compute-floor", out, err, st, "COMPUTE-FLOOR")
         # A windows python's stdout is CRLF: the anchored parses below
