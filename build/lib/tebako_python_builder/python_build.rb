@@ -355,6 +355,20 @@ module TebakoPythonBuilder
               "--with-openssl=#{openssl_prefix}",
               "--with-openssl-rpath=no"]
       args << "--enable-experimental-jit" if @python.jit?
+      # EXPERIMENT exp/xcode-16.3-arm64: the fleet's macos-14 -> macos-15
+      # move (aedeb62, ahead of the 2026-11-02 retirement) took the
+      # arm64 build toolchain from Apple Clang 15 (Xcode/CLT 15.4 — the
+      # published v0.3.3 exe's baked-in compiler string, head-to-head
+      # ratio 1.099 on the current image, run 45361240827) to Apple
+      # Clang 17 (clang-1700.0.13.3 — fresh builds read 1.6–2.1 on the
+      # 3.14 legs). CPython 3.14 auto-enables the tail-calling
+      # interpreter when the compiler passes its musttail probe; clang 15
+      # builds the classic computed-goto ceval, clang 17 the tail-call
+      # one. This flag is the discriminating probe: if the clang-17
+      # build returns to parity-class with the tail-call interpreter
+      # OFF, the mechanism and the remedy are proven in one build.
+      # 3.14-only — the flag does not exist on older lines.
+      args << "--with-tail-call-interp=no" if @platform.macos? && @python.major_minor == [3, 14]
       puts "-- Configuring CPython #{@python_version} (#{@platform.host_id}#{@python.jit? ? ", JIT on" : ""})"
       TebakoPythonBuilder::BuildHelpers.run_with_capture(args, env: configure_env, chdir: src_dir)
     rescue TebakoPythonBuilder::Error => e
