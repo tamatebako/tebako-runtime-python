@@ -57,6 +57,16 @@ on:
 jobs:
   linux-musl:
     uses: ./.github/workflows/_build-platform.yml
+    # Spec 34 §3/§8.2: the called workflow's build job declares
+    # id-token:write (the windows-signing OIDC boundary) — a reusable
+    # workflow can never elevate past the caller's grant, so the grant
+    # flows from here. contents/attestations restate the called
+    # workflow's existing needs (a permissions block is the complete set,
+    # not an addition — the publish job's SLSA L3 arm).
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     with:
       platform: linux-musl
       python_filter: ${{ inputs.python_filter || 'full' }}

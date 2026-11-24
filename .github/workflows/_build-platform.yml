@@ -251,6 +251,25 @@ jobs:
     # A hung leg fails loudly at the cap, never silently (the ruby
     # factory's 150-minute record is the reference).
     timeout-minutes: 150
+    # Spec 34 §3/§8.2 (the ruby factory's windows-signing lane, mirrored):
+    # a job-level permissions block REPLACES the inherited set, so this is
+    # the complete grant — contents:read (the release-API digest fetches
+    # below) plus id-token:write, the OIDC boundary: the Entra federated
+    # credential issues Azure tokens only to a job of this repo running in
+    # the windows-signing environment. The signing steps below are gated
+    # on WINDOWS_SIGNING_ENABLED: unsigned runs carry the environment but
+    # never request a token. A reusable workflow can never ELEVATE past
+    # the caller's grant, so every caller (the four build-<platform>.yml
+    # triggers + publish.yml) declares the same superset.
+    permissions:
+      contents: read
+      id-token: write
+    # Spec 34's attestation boundary (see the id-token note above). The
+    # build job is shared by every platform's legs — only windows legs
+    # ever arm the signing chain, but ALL legs carry the environment:
+    # it must NEVER gain required reviewers (that would gate every
+    # platform's build on an approval); protection rules stay empty.
+    environment: windows-signing
     # build_runtime's release-digest fetches ride the GitHub API;
     # unauthenticated calls share the runner NAT's 60/h budget and die on
     # 403 flakes (the 02 round-4 macos leg). secrets.GITHUB_TOKEN raises
@@ -424,6 +443,215 @@ jobs:
           set -euo pipefail
           runtime="tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"
           bash ci/macos-sign-notarize-runtime.sh "runtime-packages/$runtime"
+
+      # Spec 34 §8.2 — the Windows Authenticode leg (the ruby factory's
+      # lane, mirrored): when the repo variable WINDOWS_SIGNING_ENABLED=true,
+      # the leg's PE artifacts (the runtime exe + the libpython DLL) are
+      # Azure Trusted Signed here — after the build, before the
+      # symbol-provenance check and the boot smoke (which then exercises
+      # the SIGNED bytes — the on-platform proof) and the upload. Signing
+      # rides a sign-staging COPY, never the contract paths directly: the
+      # signing action enumerates by EXTENSION, so the whole PE set signs
+      # in a hermetic staging dir (the .tfs and the sidecars never enter
+      # files-folder) and the verify step moves the signed bytes BACK over
+      # the contract-named paths before signtool-verifying them in place
+      # (signtool verifies content, not filename). Sign-then-hash (spec 34
+      # §1.3) needs NO re-hash step in this repo: the release's .sha256
+      # sidecars are computed at publish time by the tebako-release gem's
+      # uploader from the uploaded bytes, so signing before upload anchors
+      # the signed bytes by construction. Gate off: every step below skips
+      # and the leg ships unsigned, byte-identically to today (spec 00
+      # invariant 7 — §7.4 gate-off parity). A loudly-skipped windows leg
+      # (the rc-107 carve-out above) ships nothing and skips the block.
+      - name: Arm check — Windows signing (spec 34 §4)
+        if: matrix.os == 'windows' && steps.build-windows.outputs.skipped != 'true'
+        id: signgate
+        shell: bash
+        env:
+          WINDOWS_SIGNING_ENABLED: ${{ vars.WINDOWS_SIGNING_ENABLED }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_ENDPOINT: ${{ vars.AZURE_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          AZURE_SIGNING_CERT_PROFILE: ${{ vars.AZURE_SIGNING_CERT_PROFILE }}
+        run: bash ci/windows-sign-gate.sh
+
+      # The sign-staging copy (the §7.3 soundness shape): the action below
+      # enumerates by EXTENSION, so the PE set stages under sign-staging/
+      # with its own names — the filter then covers every staged PE by
+      # construction. COPY, never move: the unsigned originals keep the
+      # contract paths until the verify step replaces them with the signed
+      # bytes. A missing PE fails closed by name before any Azure
+      # round-trip.
+      - name: Stage the PE artifacts for signing (spec 34 §7.3)
+        if: steps.signgate.outputs.armed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"
+          exe="runtime-packages/$runtime.exe"
+          test -s "$exe" || { echo "::error::spec 34 §7.3: no runtime executable at $exe — nothing to sign"; exit 1; }
+          compgen -G "runtime-packages/*.dll" > /dev/null || { echo "::error::spec 34 §7.3: no .dll artifact under runtime-packages — the libpython DLL escaped signing"; exit 1; }
+          mkdir -p sign-staging
+          cp "$exe" "sign-staging/$runtime.exe"
+          for d in runtime-packages/*.dll; do cp "$d" "sign-staging/$(basename "$d")"; done
+          ls -l sign-staging/
+
+      # OIDC workload-identity federation (spec 34 §3): no stored client
+      # secret anywhere; the federated credential is scoped to this repo
+      # × the windows-signing environment this job runs in.
+      - name: Azure login (OIDC, spec 34 §8.2)
+        if: steps.signgate.outputs.armed == 'true'
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2 (sha-pinned; proven on the ruby factory's armed windows legs + tebako dry-run 34490242097)
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # The action caches the TrustedSigning module at the CurrentUser
+      # path (Documents\PowerShell\Modules\TrustedSigning\0.5.8) while its
+      # own Install-Module lands AllUsers on the elevated runner — so a
+      # cache hit restores a 23 KiB stub and the action SKIPS the install,
+      # leaving Invoke-TrustedSigning unrecognized (the ruby factory's
+      # 2026-09-21 incident: v18's x64 legs; v17 was green only because
+      # its cache missed). Install to CurrentUser HERE, before the
+      # action's cache step: the post-job save then captures a real
+      # module, and even a poisoned restore can only overlay — never
+      # delete — these bytes.
+      - name: Preflight the TrustedSigning module (spec 34 §8.2)
+        if: steps.signgate.outputs.armed == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # PSGallery must be REGISTERED before Install-Module can name it:
+          # the ruby factory's v0.17.6 3.2.11/x86_64 leg (run 42691344155)
+          # died here with "Unable to find repository 'PSGallery'" — the
+          # runner image no longer guarantees the default registration.
+          # Register-PSRepository -Default restores it idempotently; a
+          # healthy registration is a no-op.
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default
+          }
+          if (-not (Get-Module -ListAvailable TrustedSigning)) {
+            Install-Module -Name TrustedSigning -RequiredVersion 0.5.8 -Repository PSGallery -Scope CurrentUser -Force -AllowClobber
+          }
+          Import-Module TrustedSigning -Force
+          Get-Command Invoke-TrustedSigning | Out-Null
+          Write-Host "TrustedSigning module ready: $((Get-Module TrustedSigning).Version)"
+
+      # Signs the leg's PE artifacts in the staging dir (the verify step
+      # below restores the contract paths). The account input is
+      # `signing-account-name` — spec 34 §5's draft
+      # `trusted-signing-account-name` is the deprecated alias at this
+      # action's @v1 (the PR #566 deviation, verified against the action's
+      # action.yml); do not "upgrade" the action — @v2 dropped it.
+      - name: Sign the runtime exe + libpython DLL (spec 34 §8.2)
+        if: steps.signgate.outputs.armed == 'true'
+        uses: Azure/artifact-signing-action@b443cf8ea4124818d2ea9f043cba29fc3ec47b16 # v1 (sha-pinned; proven on the ruby factory's armed windows legs + tebako dry-run 34490242097)
+        with:
+          endpoint: ${{ vars.AZURE_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_CERT_PROFILE }}
+          files-folder: sign-staging
+          # The enumeration gate (§7.3): everything PE signs by EXTENSION,
+          # never a name list — a new PE artifact must not ship unsigned by
+          # omission. Sound by construction here: the staging dir carries
+          # only PE-extension files, so the filter can miss nothing the
+          # gate below would not also catch by name.
+          files-folder-filter: exe,dll
+          file-digest: SHA256
+          # §1.4: the RFC 3161 countersignature is mandatory (the action's
+          # default timestamp server; set explicitly per spec).
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: tebako python runtime (tamatebako)
+
+      - name: Verify the signatures (spec 34 §7.1/§7.2)
+        if: steps.signgate.outputs.armed == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = "tebako-runtime-${{ needs.compute.outputs.tebako_version }}-${{ needs.compute.outputs.lang_infix }}${{ matrix.python }}-${{ matrix.host_id }}"
+          # §7.3: enumerate the SIGNED set by EXTENSION at the staging
+          # dir, never a name list — both artifact kinds this leg ships
+          # (the runtime exe + the libpython DLL).
+          $exes = @(Get-ChildItem -Path 'sign-staging' -Filter '*.exe' -File)
+          $dlls = @(Get-ChildItem -Path 'sign-staging' -Filter '*.dll' -File)
+          if ($exes.Count -eq 0) {
+            Write-Host "::error::spec 34 §7.3: no .exe artifact under sign-staging — the runtime exe escaped signing"
+            exit 1
+          }
+          if ($dlls.Count -eq 0) {
+            Write-Host "::error::spec 34 §7.3: no .dll artifact under sign-staging — the libpython DLL escaped signing"
+            exit 1
+          }
+          $stagedExe = "sign-staging/$runtime.exe"
+          if (-not (Test-Path $stagedExe -PathType Leaf)) {
+            Write-Host "::error::spec 34 §7.3: $stagedExe missing after the sign action — the runtime exe escaped signing"
+            exit 1
+          }
+          # Restore the CONTRACT-named paths with the signed bytes,
+          # replacing the unsigned originals the staging step left in
+          # place — the publish upload ships exactly these names, and the
+          # boot smoke then exercises the signed bytes. The verify loop
+          # below runs at the restored paths: signtool verifies content,
+          # not filename.
+          $exe = "runtime-packages/$runtime.exe"
+          Move-Item -Force $stagedExe $exe
+          $pes = @(Get-Item $exe)
+          foreach ($d in $dlls) {
+            $target = "runtime-packages/$($d.Name)"
+            Move-Item -Force $d.FullName $target
+            $pes += Get-Item $target
+          }
+          # signtool.exe: the action's cached BuildTools first (the
+          # TrustedSigning module still owns that directory name at
+          # action @v1; the ArtifactSigning spelling is kept as a
+          # forward-compat fallback), then the runner image's Windows
+          # Kits; newest path first.
+          $signtool = @(
+            Get-ChildItem -Path "$env:LOCALAPPDATA\TrustedSigning\Microsoft.Windows.SDK.BuildTools" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue
+            Get-ChildItem -Path "$env:LOCALAPPDATA\ArtifactSigning\Microsoft.Windows.SDK.BuildTools" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue
+            Get-ChildItem -Path 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue
+          ) | Where-Object { $_.FullName -match '\\x64\\' } |
+              Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) {
+            Write-Host "::error::spec 34 §7.1: signtool.exe not found (action BuildTools cache and Windows Kits both empty)"
+            exit 1
+          }
+          Write-Host "signtool: $($signtool.FullName)"
+          $failed = $false
+          foreach ($pe in $pes) {
+            Write-Host "== signtool verify /pa /v $($pe.Name)"
+            $out = & $signtool.FullName verify /pa /v $pe.FullName 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::spec 34 §7.1: signtool verify /pa FAILED for $($pe.Name)"
+              $failed = $true
+              continue
+            }
+            # §7.2/§1.4: the RFC 3161 countersignature is mandatory — an
+            # untimestamped signature fails the leg, never a warning.
+            if ($out -notmatch 'signature is timestamped' -and $out -notmatch 'RFC ?3161') {
+              Write-Host "::error::spec 34 §7.2: no RFC 3161 timestamp countersignature in signtool output for $($pe.Name)"
+              $failed = $true
+              continue
+            }
+            $sig = Get-AuthenticodeSignature $pe.FullName
+            if ($sig.Status -ne 'Valid') {
+              Write-Host "::error::spec 34 §7.1: Get-AuthenticodeSignature status '$($sig.Status)' (not Valid) for $($pe.Name)"
+              $failed = $true
+              continue
+            }
+            if ($null -eq $sig.TimeStamperCertificate) {
+              Write-Host "::error::spec 34 §7.2: Get-AuthenticodeSignature reports no TimeStamperCertificate for $($pe.Name)"
+              $failed = $true
+              continue
+            }
+            Write-Host "signed+timestamped: $($pe.Name) — $($sig.SignerCertificate.Subject)"
+          }
+          if ($failed) { exit 1 }
 
       # --- the gates (a red gate skips the publish below, and the
       # release job's audit then fails the run loudly) ------------------

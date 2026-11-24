@@ -36,6 +36,15 @@ release (read-only) and renders the `tpkg-registry.yaml` mirror
 (`tools/registry_update.rb` — shard-derived, additive,
 withdrawal-preserving, composite `<python>-<tebako>` version keys),
 landed on main by bot PR.
+In-leg signing mirrors the ruby factory twice over: the macOS legs
+sign + notarize the runtime exe (`ci/macos-sign-notarize-runtime.sh`,
+spec 31, behind the `APPLE_SIGNING_ENABLED` gate), and the windows
+legs Azure Trusted Sign the exe + the libpython DLL (spec 34 §8.2 —
+`ci/windows-sign-gate.sh`'s arm check, OIDC `azure/login` in the
+`windows-signing` environment, the RFC 3161 timestamp, and
+`signtool verify /pa` at the contract paths — behind the
+`WINDOWS_SIGNING_ENABLED` gate; gate-off ships unsigned
+byte-identically, spec 00 invariant 7).
 The matrix is green end to end, the windows-ucrt64 leg
 included.
 
