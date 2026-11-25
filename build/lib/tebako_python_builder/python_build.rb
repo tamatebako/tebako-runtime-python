@@ -85,6 +85,64 @@ module TebakoPythonBuilder
 
     MARKER = "# --- tebako: the fs TU + driver link (factory substitution) ---"
 
+    # gh-158283: LLVM 19 limited tail duplication of basic blocks that end
+    # in an indirect branch (llvm/llvm-project#78582). Clang lowers the
+    # interpreter's per-opcode computed-goto DISPATCH()es to ONE shared
+    # indirectbr and relies on the tail duplicator to copy it back into
+    # each handler; the new profitability limit stops that, so an affected
+    # compiler ships _PyEval_EvalFrameDefault with a single dispatch jump —
+    # defeating the per-opcode branch prediction that computed gotos exist
+    # for (9-13% slower on pyperformance; this factory's macos 3.14 legs
+    # built on the macos-15 fleet read fib-ratio 1.6-2.1 against the
+    # same-leg on-system reference where the clang-15-built published
+    # v0.3.3 exe reads 1.0-1.3 on the same image, and the fresh/v0.3.3
+    # binary gap reproduces at 1.26x interleaved; the published v0.3.3
+    # x86_64 exes carry the merged shape too — the x86_64 fleet has
+    # built with Xcode 16.3/16.4 all along). Fully fixed in LLVM
+    # 20.1.1 (llvm/llvm-project#114990); no 19.x release has the fix.
+    # Apple clang 1700.0.x (Xcode 16.3 AND 16.4 — the macos-15 fleet's
+    # whole toolchain set) carries the same bug, and 1700.3-1700.6
+    # (Xcode 26.0-26.3) still merges most dispatch jumps.
+    #
+    # The probe and the flag are CPython's own merged remedy (gh-158286,
+    # against configure.ac — 3.14.7's configure predates it, so the recipe
+    # probes here): a compile test on the compiler's identity macros —
+    # older clangs are unaffected and REJECT the option outright, so a
+    # version sniff would be both wrong and fragile. The flag must reach
+    # ceval.o ONLY: upstream measured regex_effbot 6-9% SLOWER when the
+    # forced duplication reaches the regex engine's own computed goto
+    # (code-layout-dependent, 1-9% across layouts — gh-158283's data), so
+    # a build-wide CFLAGS append would trade the interpreter's regression
+    # for the regex engine's. The channel is per-line:
+    #
+    #   3.14+: CFLAGS_CEVAL, Makefile.pre's ceval-only knob
+    #     ($(PY_CORE_CFLAGS) $(CFLAGS_CEVAL) on the Python/ceval.o rule);
+    #     configure substitutes the env value AND appends its own
+    #     -finline-max-stacksize=512 probe result to the same variable.
+    #   pre-3.14: Makefile.pre carries no CFLAGS_CEVAL (the knob lands
+    #     with 3.14), so substitute_makefiles appends a GNU make
+    #     target-specific binding, `Python/ceval.o: CFLAGS_NODIST += …` —
+    #     ceval.o's recipe expands $(CFLAGS_NODIST) through the recursive
+    #     PY_CFLAGS_NODIST with the target-local value, and every other
+    #     TU (ceval_gil.o, _sre.o, the stdlib set) expands the empty
+    #     global. Marker-verified end to end against a configured 3.13.15
+    #     tree: the token lands on Python/ceval.o's compile line alone.
+    #
+    # GCC legs never see the flag (-mllvm is clang-only). A build whose
+    # probe misses a NEW affected compiler is caught at the artifact:
+    # ci/check_symbol_provenance.sh counts the exe's dispatch branches.
+    DISPATCH_TAIL_DUP_PROBE = <<~'C'.freeze
+      #if defined(__apple_build_version__)
+      #  if __apple_build_version__ < 17000000 || __apple_build_version__ >= 18000000
+      #    error not affected
+      #  endif
+      #elif !defined(__clang__) || __clang_major__ != 19
+      #  error not affected
+      #endif
+      int main(void) { return 0; }
+    C
+    DISPATCH_TAIL_DUP_FLAG = "-mllvm -tail-dup-pred-size=1000".freeze
+
     def initialize(platform:, python_version:, prefix:, tarball:, src_sha256:, # rubocop:disable Metrics/ParameterLists,Metrics/MethodLength
                    link_unit:, link_unit_dir:, repo_root:, jobs: nil, macos_deployment_target: nil)
       @platform = platform
@@ -99,6 +157,8 @@ module TebakoPythonBuilder
       @jobs = jobs
       @macos_deployment_target = macos_deployment_target
       @jit_env = {}
+      @dispatch_tail_dup_probed = false
+      @dispatch_tail_dup_flag = nil
     end
 
     attr_reader :src_dir, :stage_dir
@@ -411,7 +471,7 @@ module TebakoPythonBuilder
         {
           "ZLIB_CFLAGS" => "-I#{File.join(zlib, "include")}",
           "ZLIB_LIBS" => mlibs.static_lib("z")
-        }
+        }.merge(dispatch_tail_dup_env)
       elsif @platform.linux_gnu?
         { "LDFLAGS" => "-pthread" }
       elsif @platform.msys?
@@ -420,6 +480,38 @@ module TebakoPythonBuilder
       else
         {}
       end.merge(@jit_env)
+    end
+
+    # The probe itself, memoized (configure_env and substitute_makefiles
+    # both key on the outcome; the compiler runs once). The probe file is
+    # always removed: a stale copy in the prefix would outlive its run.
+    def probe_dispatch_tail_dup
+      return if @dispatch_tail_dup_probed
+
+      @dispatch_tail_dup_probed = true
+      @dispatch_tail_dup_cc = ENV.fetch("CC", "cc")
+      FileUtils.mkdir_p(@prefix)
+      probe = File.join(@prefix, "dispatch_tail_dup_probe.c")
+      File.write(probe, DISPATCH_TAIL_DUP_PROBE)
+      _, st = Open3.capture2e(@dispatch_tail_dup_cc, "-c", probe, "-o", File::NULL)
+      FileUtils.rm_f(probe)
+      @dispatch_tail_dup_flag = DISPATCH_TAIL_DUP_FLAG if st.exitstatus&.zero?
+    rescue Errno::ENOENT
+      # A missing cc is not an affected compiler; configure names the
+      # toolchain break moments later with its own error.
+      FileUtils.rm_f(probe)
+      nil
+    end
+
+    # True when the workaround must ride substitute_makefiles'
+    # target-specific append instead of the CFLAGS_CEVAL env: Makefile.pre
+    # carries the ceval-only knob only from 3.14 (configure.subst's
+    # AC_SUBST([CFLAGS_CEVAL]) and the Python/ceval.o rule's reference
+    # land together); older lines' Makefiles would never expand an env
+    # CFLAGS_CEVAL, so their ceval.o gets the flag from GNU make's
+    # target-specific binding instead.
+    def dispatch_tail_dup_via_append?
+      (@python.major_minor <=> [3, 14]) < 0
     end
 
     # --- the JIT toolchain gate (jit lines only) -------------------------
@@ -592,6 +684,8 @@ module TebakoPythonBuilder
         content += "\n#{MARKER}\nTEBAKO_LIBS=\t#{mlibs.tebako_libs}\n" \
                    "Programs/tebako_python.o: Programs/tebako_python.c $(PYTHON_HEADERS)\n" \
                    "\t$(CC) -c $(PY_CORE_CFLAGS) -o $@ $<\n"
+        tail_dup = dispatch_tail_dup_append
+        content += "#{tail_dup}\n" if tail_dup
         File.write(path, content)
       end
 
@@ -656,6 +750,8 @@ module TebakoPythonBuilder
       mlibs.modlib_rewrites.each_key do |key|
         missing << key unless content =~ /^#{key}=\S/
       end
+      tail_dup = dispatch_tail_dup_append
+      missing << "the ceval dispatch tail-dup binding" if tail_dup && !content.include?(tail_dup)
       return if missing.empty?
 
       raise TebakoPythonBuilder::Error.new(
@@ -760,6 +856,58 @@ module TebakoPythonBuilder
     end
 
     public
+
+    # The gh-158283 workaround's enablement probe (the constant block's
+    # comment owns the mechanism AND the per-line channel table): compile
+    # the identity-macro test with the build's own compiler (CC when set,
+    # else cc — configure's effective choice on the macOS legs, where both
+    # names resolve the same Apple clang). An affected compiler compiles
+    # the probe; an unaffected one trips the probe's #error, so the
+    # workaround self-retires when the fleet's toolchain leaves the
+    # affected window (and never reaches a GCC leg). On 3.14+ the flag
+    # rides the CFLAGS_CEVAL env channel (this method's return);
+    # pre-3.14 carries no such variable, so the env stays empty there and
+    # substitute_makefiles' target-specific append delivers the flag
+    # instead (the probe memo is what the append keys on — configure runs
+    # before the substitutions in #run). Public: configure_env's seam,
+    # specced directly.
+    def dispatch_tail_dup_env
+      return {} unless @platform.macos?
+
+      probe_dispatch_tail_dup
+      return {} if @dispatch_tail_dup_flag.nil?
+
+      channel = if dispatch_tail_dup_via_append?
+                  "via the target-specific CFLAGS_NODIST append (pre-3.14 Makefile.pre carries no CFLAGS_CEVAL)"
+                else
+                  "via CFLAGS_CEVAL"
+                end
+      puts "-- gh-158283: the build compiler merges the computed-goto dispatch " \
+           "(#{@dispatch_tail_dup_cc} passes the probe) — ceval builds with #{DISPATCH_TAIL_DUP_FLAG} #{channel}"
+      return {} if dispatch_tail_dup_via_append?
+
+      { "CFLAGS_CEVAL" => DISPATCH_TAIL_DUP_FLAG }
+    end
+
+    # Pre-3.14's channel for the workaround (the constant block's comment
+    # owns the why): a GNU make target-specific variable binding. GNU
+    # make applies it to ceval.o's recipe however that recipe is found
+    # (the implicit rule here), and ceval.o's header-only prerequisites
+    # carry no recipes for the value to leak into. nil when the probe did
+    # not arm or the line carries CFLAGS_CEVAL. Public: specced directly.
+    def dispatch_tail_dup_append
+      probe_dispatch_tail_dup if @platform.macos?
+      return nil unless dispatch_tail_dup_via_append? && @dispatch_tail_dup_flag
+
+      "Python/ceval.o: CFLAGS_NODIST += #{@dispatch_tail_dup_flag}"
+    end
+
+    # The memo record for the probe: true once probe_dispatch_tail_dup
+    # has run, however it came out (substitute_makefiles must not
+    # re-compile the probe to learn the outcome).
+    def dispatch_tail_dup_probed?
+      @dispatch_tail_dup_probed
+    end
 
     # The staged prefix tree (the image root's content): stage/<root>
     # with the root spelling normalized ("/__tfs__" -> "__tfs__", the
