@@ -99,6 +99,18 @@ incarnations:
    child skips the boot and runs the interpreter, whose libc IO the shim
    now serves from the VFS.
 
+The macOS entitlement plane of that re-exec (tebako#1117): the
+hardened runtime strips `DYLD_INSERT_LIBRARIES` at launch unless the
+exe carries `com.apple.security.cs.allow-dyld-environment-variables`
+— so `ci/runtime.entitlements` carries it, and
+`ci/macos-sign-notarize-runtime.sh` asserts it embedded by key name
+(no runner can police the class at exec time: macOS 15's dyld
+tolerates the omission; macOS 14 strips — the tebako-runtime-r#5
+class, whose python symptom is `No module named 'encodings'`). The
+mechanism determination, and why the omission never fired while every
+published python runtime shipped unsigned, is recorded in
+`docs/build-chain.md`.
+
 `PYTHONHOME` is set env-first — `TEBAKO_MOUNT_ROOT` when set-and-
 nonempty, else `tebako_mount_point()` (the ruby factory's era-2 rbconfig
 pattern: the driver's ffi mount point is fixed before the windows
