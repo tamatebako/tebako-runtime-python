@@ -189,6 +189,40 @@ elif printf '%s' "$file_out" | grep -q 'Mach-O'; then
   [ -z "$minos" ] && fail "otool -l on $EXE yielded no minos record — a Mach-O without a support floor cannot be gated"
   [ "$minos" = "$floor" ] || fail "$EXE records minos $minos but contract.yml pins $floor — the macOS floor floated with the runner image (tebako-runtime-python#81)"
   note "the exe's recorded support floor is the pinned $floor"
+
+  # The interpreter's computed-goto dispatch survived the build compiler.
+  # gh-158283: Apple clang 1700.x (Xcode 16.3-16.4 fully, 26.0-26.3 mostly —
+  # the macos-15 fleet) merges the ceval loop's per-opcode dispatch jumps
+  # into ONE shared indirect branch (llvm/llvm-project#78582; fixed
+  # upstream in LLVM 20.1.1), defeating the per-opcode branch prediction
+  # computed gotos exist for — a slow interpreter that boots green and
+  # passes every functional gate (the macos-arm64 3.14 legs read fib-ratio
+  # 1.6-2.1 vs the same-leg reference where the clang-15-built v0.3.3 exe
+  # reads 1.0-1.3 on the same image; the published v0.3.3 x86_64 exes
+  # carry the merged shape too — the x86_64 legs have built with Xcode
+  # 16.3/16.4 all along). The recipe's tail-dup workaround
+  # (PythonBuild#dispatch_tail_dup_env / #dispatch_tail_dup_append)
+  # forces the duplication on ceval; this arm is the ARTIFACT-level proof
+  # the build carries it, so a probe miss on a future toolchain is a
+  # named failure here, never a green slow exe. The dispatch spelling is
+  # arch-specific in otool's output: arm64 `br <reg>`, x86_64
+  # `jmpq *<operand>` — count both, never the arch's direct jumps.
+  # The population floor is 100: a merged build carries 1 dispatch branch,
+  # healthy shapes carry 185-360 (handler dedup varies by compiler). A
+  # deliberate switch to the tail-calling interpreter changes the shape
+  # this arm measures — re-baseline it in the same change. otool labels
+  # the function like the main arm above; capture-then-test, same reason.
+  dis_eval="$(otool -tV "$EXE" 2>/dev/null | awk '/^__PyEval_EvalFrameDefault:/{f=1; next} f && /^[_a-zA-Z].*:$/{exit} f' || true)"
+  if [ -z "$dis_eval" ]; then
+    fail "otool yielded no _PyEval_EvalFrameDefault body in $EXE — the dispatch-shape check cannot run"
+  else
+    dispatch_sites="$(printf '%s\n' "$dis_eval" | awk '$2=="br" || ($2 ~ /^jmp/ && $3 ~ /^\*/) {n++} END {print n+0}')"
+    if [ "$dispatch_sites" -lt 100 ]; then
+      fail "$EXE's _PyEval_EvalFrameDefault carries $dispatch_sites indirect dispatch branch(es) — the compiler merged the per-opcode computed-goto dispatch into one shared site (gh-158283; llvm/llvm-project#78582): a ~10-30% slower interpreter on dispatch-dense code (the macos-15 fleet's Apple clang 1700.x). The recipe's dispatch tail-dup workaround either did not probe this compiler or the flag was dropped — the ceval build needs -mllvm -tail-dup-pred-size=1000 (3.14+: CFLAGS_CEVAL; pre-3.14: the target-specific CFLAGS_NODIST append)"
+    else
+      note "the eval loop carries $dispatch_sites per-opcode dispatch branches (the computed-goto shape survived the compiler)"
+    fi
+  fi
 fi
 
 if [ "$failures" -gt 0 ]; then
