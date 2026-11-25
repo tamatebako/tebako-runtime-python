@@ -1,24 +1,56 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Spec 31 §3/§5: the macOS runtime signing profile (fixed pair, pinned
+  Spec 31 §3/§5: the macOS runtime signing profile (fixed set, pinned
   here until spec 31 §2's manifest derivation lands).
 
+  allow-dyld-environment-variables — THE LOAD-BEARING GRANT
+    (tebako#1117; the tebako-runtime-r#5 precedent). The spec 22
+    tier-1 visibility design re-execs the exe with the driver-armed
+    DYLD_INSERT_LIBRARIES (build/resources/tebako_python_main.c's
+    second incarnation — the in-image libtfs_preload.dylib is the
+    UNPATCHED CPython interpreter's only VFS visibility). The
+    hardened runtime strips every DYLD_* variable at launch unless
+    this grant is present; the re-exec'd incarnation then runs
+    shimless, the mount root (/__tfs__) does not exist on the host
+    filesystem, and the interpreter dies "ModuleNotFoundError: No
+    module named 'encodings'" — python's exact analog of R's
+    "unable to open the base package" (tebako-runtime-r#5). Proven
+    on darwin-23 (macOS 14.1.1 arm64) against the published
+    pair's own class: the same exe adhoc-signed with the hardened
+    runtime and the two-key profile dies on the encodings import;
+    re-signed adding ONLY this grant, the boot serves stdlib imports
+    and a libc open() of an in-image path. Every published python runtime
+    to date ships UNSIGNED (APPLE_SIGNING_ENABLED has never been
+    armed in this repo), and dyld strips the insertion only for
+    hardened-runtime targets — the only reason the omission never
+    fired (tebako#1117's "works on darwin-23" cell). The macos-15
+    runners TOLERATE a missing grant (their dyld keeps the
+    variables), so no CI runner can police this class at exec time:
+    ci/macos-sign-notarize-runtime.sh asserts the embedded profile
+    statically, by key name — this grant must be embedded BEFORE
+    the signing gate ever arms, which is why it lands while the
+    legs still ship unsigned.
   disable-library-validation — EVERY runtime slice: a hardened-runtime
     process by default refuses unsigned dylibs, and the driver
     materializes in-image native extensions (.so) to the host for
     dlopen; they carry no Developer ID signature of their own (§1.4).
+    This grant governs only WHICH dylibs may load — it says nothing
+    about WHETHER dyld honors the environment; only the grant above
+    does (the pair is not redundant).
   allow-jit — CPython JIT builds (the matrix's jit_llvm legs) map
     executable memory at runtime (MAP_JIT on arm64). Harmless on a
     python built without a JIT: the entitlement is a grant, never a
     requirement.
 
-  Keep the two <true/> values on their own lines: the embedding check
-  in ci/macos-sign-notarize-runtime.sh counts them (macOS 15 emits the
-  embedded plist single-line, so it greps for <true/>, not key names).
+  Keep each <true/> on its own line: the embedding check in
+  ci/macos-sign-notarize-runtime.sh counts them AND greps each key
+  name (macOS 15 emits the embedded plist single-line).
 -->
 <plist version="1.0">
 <dict>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
   <key>com.apple.security.cs.allow-jit</key>
