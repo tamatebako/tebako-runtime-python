@@ -35,6 +35,14 @@
 # self-averages). 25 runs cost ~3 s on the fast class, ~7 s on the slow
 # one — the probe stays tiny.
 #
+# The boot smoke also re-runs this file ITSELF as the reference arm of
+# its same-window re-probe (tools/boot_smoke's compute-floor header): a
+# first-window breach re-times both arms back-to-back, under the
+# interpreter the workflow hands down as COMPUTE_FLOOR_REFERENCE_PYTHON
+# — run 45834307812's false red is the class that drift between the two
+# separately measured windows paints onto a healthy build. The printed
+# contract (n:/runs:/median:) is the re-probe's parse surface too.
+#
 # Usage:
 #   python3 tools/compute_reference_probe.py
 #

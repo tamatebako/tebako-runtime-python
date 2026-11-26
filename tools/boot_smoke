@@ -249,8 +249,14 @@ SOCKET_PROBE_TIMEOUT = 120
 # reference — never an absolute seconds ceiling (the header block's
 # runner-class math; tebako#1095's verdict exonerated every tebako
 # layer and falsified the fleet-calibrated 4.0 s ceiling the current
-# macos-15-intel class moved past). A named failure, never a
-# flake-shape benchmark bound.
+# macos-15-intel class moved past). A first-window breach is not yet a
+# verdict: the two arms are re-measured back-to-back in ONE shared
+# window (the same-window re-probe — the reference interpreter rides
+# down as COMPUTE_FLOOR_REFERENCE_PYTHON), because a slow BUILD
+# breaches in every window while a contended instance's window drift
+# (run 45834307812's false red) clears. The re-probe never downgrades
+# the gate: unavailable or malformed, the first-window verdict stands.
+# A named failure, never a flake-shape benchmark bound.
 COMPUTE_FIB_N = 35
 COMPUTE_FIB_RUNS = 3
 COMPUTE_FLOOR_MAX_RATIO = 1.5
@@ -682,6 +688,14 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
               "build ships a slow interpreter green under a boot-only gate (tebako-runtime-python#79)")
         puts "     compute-floor: fib(#{COMPUTE_FIB_N}) #{out[/^runs: (.+)$/, 1]}"
         best = out[/^best: (\d+(?:\.\d+)?)$/, 1]&.to_f
+        # The tebako arm as a reusable shape: the same-window re-probe
+        # (below) re-runs the identical probe for its second measurement.
+        run_arm = lambda do
+          o, e, s = boot(executable, ["-c", compute_probe], { "TEBAKO_RUNTIME_IMAGE" => image },
+                         timeout: platform.msys? ? MATERIALIZE_BOOT_TIMEOUT : BOOT_TIMEOUT)
+          o = o.delete("\r")
+          [o, e, s, o[/^best: (\d+(?:\.\d+)?)$/, 1]&.to_f, o[/^runs: (.+)$/, 1]]
+        end
         # The same-leg on-system reference (the header block): the
         # workflow's sibling step times tools/compute_reference_probe.py
         # under setup-python at the leg's base version on THIS runner
@@ -715,7 +729,63 @@ def run_scenarios(executable, platform, selected, tfs:, line:) # rubocop:disable
                  "is a slow BUILD, never a publishable artifact " \
                  "(tebako-runtime-python#79)\nstdout: #{out}\nstderr: #{err}"
         if ratio.nil? || ratio > COMPUTE_FLOOR_MAX_RATIO
-          if COMPUTE_FLOOR_MODE == "warn"
+          # The same-window re-probe (the header block): the first
+          # window's two arms ran about a minute apart — the sibling
+          # step measured the reference, this scenario measured the
+          # tebako arm — and on a contended instance a drift between
+          # the two windows reads exactly like a slow build: the
+          # reference's median-of-25 recovers ITS window's floor while
+          # the tebako arm's best-of-3 lands whole in a bad one (run
+          # 45834307812's macos-arm64 3.14.7 leg red at 1.665 on an
+          # artifact that re-measures at parity ≈1.0 against the
+          # on-system reference on a quiet machine, and whose
+          # same-commit sibling leg read 1.434 four hours earlier on a
+          # sibling instance). A slow BUILD breaches in EVERY window;
+          # a window-noise breach clears when both arms are re-measured
+          # back-to-back. The reference interpreter rides down as
+          # COMPUTE_FLOOR_REFERENCE_PYTHON — the sibling step's own
+          # resolved (and generation-asserted) interpreter, re-timed
+          # here under the committed tools/compute_reference_probe.py.
+          # The container legs cannot reach the host's interpreter and
+          # keep the first-window verdict; an unavailable or malformed
+          # re-probe is NAMED and never downgrades the gate — the
+          # original breach stands.
+          ref_python = ENV.fetch("COMPUTE_FLOOR_REFERENCE_PYTHON", nil).to_s
+          reprobe_file = File.expand_path("compute_reference_probe.py", __dir__)
+          reprobe_ratio = nil
+          if !ref_python.empty? && File.executable?(ref_python) && File.file?(reprobe_file)
+            ref2_out, _ref2_err, ref2_st = Open3.capture3(ref_python, reprobe_file)
+            ref2_out = ref2_out.delete("\r")
+            median2 = ref2_out[/^median: (\d+(?:\.\d+)?)$/, 1]&.to_f
+            n2 = ref2_out[/^n: (\d+)$/, 1]&.to_i
+            _out2, _err2, st2, best2, runs2 = run_arm.call
+            if ref2_st.success? && st2.success? && median2&.positive? && n2 == reference_n && best2
+              reprobe_ratio = (best2 / fib_calls(COMPUTE_FIB_N)) / (median2 / fib_calls(reference_n))
+              puts "     compute-floor: the same-window re-probe — the reference's fib(#{reference_n}) " \
+                   "median #{format('%.3f', median2)}s against the tebako arm's fib(#{COMPUTE_FIB_N}) " \
+                   "#{runs2} — per-call ratio #{format('%.3f', reprobe_ratio)} " \
+                   "(limit #{COMPUTE_FLOOR_MAX_RATIO}x)"
+            else
+              puts "     compute-floor: the same-window re-probe is malformed (reference exit " \
+                   "#{ref2_st.exitstatus.inspect}, median #{median2.inspect}, n #{n2.inspect} — " \
+                   "the tebako re-run exit #{st2.exitstatus.inspect}, best #{best2.inspect}) — " \
+                   "the first-window verdict stands"
+            end
+          else
+            puts "     compute-floor: the same-window re-probe rides COMPUTE_FLOOR_REFERENCE_PYTHON " \
+                 "(#{ref_python.empty? ? 'unset' : ref_python.inspect}, executable: " \
+                 "#{!ref_python.empty? && File.executable?(ref_python)}) — unavailable on this leg " \
+                 "(the container legs cannot reach the host's interpreter); the first-window " \
+                 "verdict stands"
+          end
+          detail = "#{detail}\nthe same-window re-probe: " \
+                   "#{reprobe_ratio ? format('ratio %.3f', reprobe_ratio) : 'unavailable or malformed'} " \
+                   "(the log lines above)"
+          if reprobe_ratio && reprobe_ratio <= COMPUTE_FLOOR_MAX_RATIO
+            puts "     compute-floor: the breach does not survive the same-window re-probe — " \
+                 "window noise on a contended instance, not a build property"
+            check(floor, true, detail)
+          elsif COMPUTE_FLOOR_MODE == "warn"
             # The warn tier (the header block + the mode comment): the
             # stale-ceiling false-red class lives on this leg's fleet —
             # the measurement and a workflow-command warning carry a
