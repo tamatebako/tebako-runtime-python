@@ -707,10 +707,15 @@ jobs:
       # MEDIAN of 25 runs — at ~0.1 s a run, a best-of-3 min samples the
       # runner's instantaneous state instead of its sustained rate; the
       # first full-matrix run false-red two healthy macos-arm64 legs on
-      # exactly that class, run 45344792366). The container legs measure
-      # on the ubuntu host — the container shares the host's silicon. A
-      # loudly skipped windows leg (the rc-107 carve-out above) measures
-      # nothing.
+      # exactly that class, run 45344792366). The resolved interpreter's
+      # PATH also rides down (ref_python) so the boot smoke's
+      # same-window re-probe can re-time BOTH arms back-to-back when a
+      # first window breaches — a contended instance's window drift
+      # (run 45834307812's macos-arm64 false red) is indistinguishable
+      # from a slow BUILD until the shared window separates them. The
+      # container legs measure on the ubuntu host — the container
+      # shares the host's silicon. A loudly skipped windows leg (the
+      # rc-107 carve-out above) measures nothing.
       - name: Provision the on-system reference python (the compute-floor ratio gate)
         if: ${{ matrix.os != 'windows' || steps.build-windows.outputs.skipped != 'true' }}
         id: refpy
@@ -758,6 +763,14 @@ jobs:
           fi
           echo "ref_seconds=$median" >> "$GITHUB_OUTPUT"
           echo "ref_n=$n" >> "$GITHUB_OUTPUT"
+          # The resolved interpreter itself, for the boot smoke's
+          # same-window re-probe (tools/boot_smoke's compute-floor
+          # header): a first-window breach re-times THIS interpreter
+          # back-to-back with the tebako arm — the generation assertion
+          # above is the re-probe's identity anchor. Runner-native legs
+          # only: the container legs cannot exec the host's interpreter
+          # and keep the first-window verdict.
+          echo "ref_python=$(command -v "$py")" >> "$GITHUB_OUTPUT"
 
       # The boot smoke self-selects the scenario set per platform (the
       # POSIX set vs the windows bare + named-error trio) and resolves the
@@ -766,6 +779,10 @@ jobs:
       # the container legs it is the musl/gnu binary matching the image.
       # COMPUTE_FLOOR_REFERENCE_SECONDS/N are the sibling step's same-leg
       # on-system measurement (the ratio gate's denominator — above).
+      # COMPUTE_FLOOR_REFERENCE_PYTHON is deliberately NOT handed down
+      # here: the host's reference interpreter is not executable inside
+      # the container, so the container legs' boot smoke keeps the
+      # first-window verdict (the re-probe names its absence).
       - name: Boot smoke (container legs)
         if: matrix.container != null
         env:
@@ -790,6 +807,9 @@ jobs:
           # on-system measurement (above).
           COMPUTE_FLOOR_REFERENCE_SECONDS: ${{ steps.computeref.outputs.ref_seconds }}
           COMPUTE_FLOOR_REFERENCE_N: ${{ steps.computeref.outputs.ref_n }}
+          # The same-window re-probe's reference arm (tools/boot_smoke):
+          # the sibling step's resolved, generation-asserted interpreter.
+          COMPUTE_FLOOR_REFERENCE_PYTHON: ${{ steps.computeref.outputs.ref_python }}
           # The compute-floor warn tier (tebako-runtime-python#79): the
           # macos-x86_64 legs ride warn-only as insurance while the
           # runner-class-relative ratio gate proves itself — this is the
@@ -816,6 +836,8 @@ jobs:
           # The ratio gate's denominator (the sibling step, above).
           COMPUTE_FLOOR_REFERENCE_SECONDS: ${{ steps.computeref.outputs.ref_seconds }}
           COMPUTE_FLOOR_REFERENCE_N: ${{ steps.computeref.outputs.ref_n }}
+          # The same-window re-probe's reference arm (tools/boot_smoke).
+          COMPUTE_FLOOR_REFERENCE_PYTHON: ${{ steps.computeref.outputs.ref_python }}
         run: |
           set -euo pipefail
           TEBAKO_TFS=$(echo .build/downloads/tfs/*/tfs-*)
